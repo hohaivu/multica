@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 import {
   autoUpdate,
   computePosition,
@@ -51,11 +58,15 @@ function TableActionButton({
   icon: Icon,
   label,
   onAction,
+  onKeyDown,
+  tabIndex,
   destructive = false,
 }: {
   icon: LucideIcon;
   label: string;
   onAction: () => void;
+  onKeyDown: (event: ReactKeyboardEvent<HTMLButtonElement>) => void;
+  tabIndex: number;
   destructive?: boolean;
 }) {
   return (
@@ -67,12 +78,21 @@ function TableActionButton({
             variant="ghost"
             size="icon-sm"
             aria-label={label}
+            tabIndex={tabIndex}
             className={
               destructive
                 ? "text-destructive hover:text-destructive"
                 : undefined
             }
-            onClick={onAction}
+            onClick={(event) => {
+              const button = event.currentTarget;
+              onAction();
+              // Commands deliberately restore the editor selection. Keep
+              // keyboard activation in the toolbar so Enter/Space can invoke
+              // another action without requiring the user to re-enter it.
+              if (event.detail === 0) button.focus();
+            }}
+            onKeyDown={onKeyDown}
             onMouseDown={(event) => event.preventDefault()}
           />
         }
@@ -90,6 +110,7 @@ function TableActionButton({
 function EditorTableMenu({ editor }: { editor: Editor }) {
   const { t } = useT("editor");
   const [visible, setVisible] = useState(() => shouldShowTableMenu(editor));
+  const [focusedActionIndex, setFocusedActionIndex] = useState(0);
   const floatingRef = useRef<HTMLDivElement>(null);
   const updatePositionRef = useRef<() => void>(() => {});
 
@@ -127,6 +148,31 @@ function EditorTableMenu({ editor }: { editor: Editor }) {
     return () => {
       editor.off("blur", onBlur);
     };
+  }, [editor]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.key !== "F10" ||
+        event.shiftKey ||
+        event.ctrlKey ||
+        event.metaKey
+      ) {
+        return;
+      }
+      if (!shouldShowTableMenu(editor)) return;
+      const firstButton =
+        floatingRef.current?.querySelector<HTMLButtonElement>("button");
+      if (!firstButton) return;
+      event.preventDefault();
+      setFocusedActionIndex(0);
+      firstButton.focus();
+    };
+
+    const editorDom = editor.view?.dom;
+    if (!editorDom) return;
+    editorDom.addEventListener("keydown", onKeyDown);
+    return () => editorDom.removeEventListener("keydown", onKeyDown);
   }, [editor]);
 
   useEffect(() => {
@@ -185,6 +231,31 @@ function EditorTableMenu({ editor }: { editor: Editor }) {
     [editor],
   );
 
+  const handleActionKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        editor.commands.focus();
+        return;
+      }
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+
+      const buttons = Array.from(
+        floatingRef.current?.querySelectorAll<HTMLButtonElement>("button") ??
+          [],
+      );
+      const currentIndex = buttons.indexOf(event.currentTarget);
+      if (currentIndex < 0 || buttons.length === 0) return;
+      event.preventDefault();
+      const direction = event.key === "ArrowRight" ? 1 : -1;
+      const nextIndex =
+        (currentIndex + direction + buttons.length) % buttons.length;
+      setFocusedActionIndex(nextIndex);
+      buttons[nextIndex]?.focus();
+    },
+    [editor],
+  );
+
   if (!visible) return null;
 
   return (
@@ -192,6 +263,7 @@ function EditorTableMenu({ editor }: { editor: Editor }) {
       ref={floatingRef}
       role="toolbar"
       aria-label={t(($) => $.table_menu.label)}
+      aria-keyshortcuts="F10"
       className="bubble-menu"
       style={{
         position: "fixed",
@@ -199,45 +271,62 @@ function EditorTableMenu({ editor }: { editor: Editor }) {
         width: "max-content",
         visibility: "hidden",
       }}
-      onMouseDown={(event) => event.preventDefault()}
+      onMouseDown={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      }}
     >
       <TooltipProvider delay={300}>
         <TableActionButton
           icon={BetweenHorizontalStart}
           label={t(($) => $.table_menu.add_row_above)}
           onAction={() => run((chain) => chain.addRowBefore())}
+          onKeyDown={handleActionKeyDown}
+          tabIndex={focusedActionIndex === 0 ? 0 : -1}
         />
         <TableActionButton
           icon={BetweenHorizontalEnd}
           label={t(($) => $.table_menu.add_row_below)}
           onAction={() => run((chain) => chain.addRowAfter())}
+          onKeyDown={handleActionKeyDown}
+          tabIndex={focusedActionIndex === 1 ? 0 : -1}
         />
         <TableActionButton
           icon={Rows3}
           label={t(($) => $.table_menu.delete_row)}
           onAction={() => run((chain) => chain.deleteRow())}
+          onKeyDown={handleActionKeyDown}
+          tabIndex={focusedActionIndex === 2 ? 0 : -1}
         />
         <Separator orientation="vertical" className="mx-0.5 h-5" />
         <TableActionButton
           icon={BetweenVerticalStart}
           label={t(($) => $.table_menu.add_column_left)}
           onAction={() => run((chain) => chain.addColumnBefore())}
+          onKeyDown={handleActionKeyDown}
+          tabIndex={focusedActionIndex === 3 ? 0 : -1}
         />
         <TableActionButton
           icon={BetweenVerticalEnd}
           label={t(($) => $.table_menu.add_column_right)}
           onAction={() => run((chain) => chain.addColumnAfter())}
+          onKeyDown={handleActionKeyDown}
+          tabIndex={focusedActionIndex === 4 ? 0 : -1}
         />
         <TableActionButton
           icon={Columns3}
           label={t(($) => $.table_menu.delete_column)}
           onAction={() => run((chain) => chain.deleteColumn())}
+          onKeyDown={handleActionKeyDown}
+          tabIndex={focusedActionIndex === 5 ? 0 : -1}
         />
         <Separator orientation="vertical" className="mx-0.5 h-5" />
         <TableActionButton
           icon={Trash2}
           label={t(($) => $.table_menu.delete_table)}
           onAction={() => run((chain) => chain.deleteTable())}
+          onKeyDown={handleActionKeyDown}
+          tabIndex={focusedActionIndex === 6 ? 0 : -1}
           destructive
         />
       </TooltipProvider>

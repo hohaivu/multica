@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   act,
   fireEvent,
@@ -50,11 +50,19 @@ vi.mock("../i18n", () => ({
 import { EditorTableMenu } from "./table-menu";
 
 type EditorEvent = "transaction" | "blur";
+const harnessCleanups = new Set<() => void>();
+
+afterEach(() => {
+  for (const cleanup of harnessCleanups) cleanup();
+  harnessCleanups.clear();
+});
 
 function createEditorHarness() {
   let inTable = false;
   const listeners = new Map<EditorEvent, Set<() => void>>();
   const editorDom = document.createElement("div");
+  editorDom.tabIndex = -1;
+  document.body.append(editorDom);
   const table = document.createElement("table");
   const row = document.createElement("tr");
   const cell = document.createElement("td");
@@ -64,7 +72,10 @@ function createEditorHarness() {
 
   const run = vi.fn(() => true);
   const commands = {
-    focus: vi.fn(),
+    focus: vi.fn(() => {
+      editorDom.focus();
+      return commands;
+    }),
     addRowBefore: vi.fn(),
     addRowAfter: vi.fn(),
     deleteRow: vi.fn(),
@@ -74,7 +85,6 @@ function createEditorHarness() {
     deleteTable: vi.fn(),
     run,
   };
-  commands.focus.mockReturnValue(commands);
   commands.addRowBefore.mockReturnValue(commands);
   commands.addRowAfter.mockReturnValue(commands);
   commands.deleteRow.mockReturnValue(commands);
@@ -88,6 +98,7 @@ function createEditorHarness() {
     isEditable: true,
     isInitialized: true,
     isActive: vi.fn((name: string) => name === "table" && inTable),
+    commands,
     chain: vi.fn(() => commands),
     on: vi.fn((event: EditorEvent, listener: () => void) => {
       const eventListeners = listeners.get(event) ?? new Set();
@@ -106,6 +117,9 @@ function createEditorHarness() {
       hasFocus: vi.fn(() => true),
     },
   } as unknown as Editor;
+
+  const cleanup = () => editorDom.remove();
+  harnessCleanups.add(cleanup);
 
   return {
     commands,
@@ -168,7 +182,7 @@ describe("EditorTableMenu", () => {
   );
 
   it.each(actions)(
-    "invokes %s through native keyboard activation after Tab focus",
+    "invokes %s through F10, arrow navigation, and native keyboard activation",
     async (label, command) => {
       const harness = createEditorHarness();
       harness.setInTable(true);
@@ -179,9 +193,18 @@ describe("EditorTableMenu", () => {
         expect(screen.getByRole("button", { name: label })).toBeVisible(),
       );
       const button = screen.getByRole("button", { name: label });
-      const actionIndex = actions.findIndex(([actionLabel]) => actionLabel === label);
-      for (let index = 0; index <= actionIndex; index += 1) {
-        await user.tab();
+      const actionIndex = actions.findIndex(
+        ([actionLabel]) => actionLabel === label,
+      );
+
+      harness.editor.view.dom.focus();
+      fireEvent.keyDown(harness.editor.view.dom, { key: "F10" });
+      expect(document.activeElement).toBe(
+        screen.getByRole("button", { name: actions[0][0] }),
+      );
+
+      for (let index = 0; index < actionIndex; index += 1) {
+        await user.keyboard("{ArrowRight}");
       }
       expect(document.activeElement).toBe(button);
 
@@ -191,9 +214,49 @@ describe("EditorTableMenu", () => {
       expect(harness.commands.focus).toHaveBeenCalledTimes(2);
       expect(harness.commands[command]).toHaveBeenCalledTimes(2);
       expect(harness.commands.run).toHaveBeenCalledTimes(2);
+      // The real Tiptap focus command returns focus to the editor. The menu
+      // explicitly restores keyboard focus to the activated button afterward.
       expect(document.activeElement).toBe(button);
     },
   );
+
+  it("does not bubble chrome clicks to an editor container", async () => {
+    const harness = createEditorHarness();
+    const onContainerMouseDown = vi.fn();
+    harness.setInTable(true);
+    render(
+      <div onMouseDown={onContainerMouseDown}>
+        <EditorTableMenu editor={harness.editor} />
+      </div>,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByRole("toolbar", { name: "Edit table" })).toBeVisible(),
+    );
+    const separator = screen.getAllByRole("separator")[0];
+    if (!separator) throw new Error("table menu separator not rendered");
+    fireEvent.mouseDown(separator);
+
+    expect(onContainerMouseDown).not.toHaveBeenCalled();
+    expect(screen.getByRole("toolbar", { name: "Edit table" })).toBeVisible();
+  });
+
+  it("returns focus to the editor when Escape leaves the toolbar", async () => {
+    const harness = createEditorHarness();
+    harness.setInTable(true);
+    const user = userEvent.setup();
+    render(<EditorTableMenu editor={harness.editor} />);
+
+    await waitFor(() =>
+      expect(screen.getByRole("toolbar", { name: "Edit table" })).toBeVisible(),
+    );
+    harness.editor.view.dom.focus();
+    fireEvent.keyDown(harness.editor.view.dom, { key: "F10" });
+    await user.keyboard("{Escape}");
+
+    expect(harness.commands.focus).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).toBe(harness.editor.view.dom);
+  });
 
   it("keeps a focused menu open on editor blur and hides after focus leaves it", async () => {
     const harness = createEditorHarness();
