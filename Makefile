@@ -275,7 +275,11 @@ cli: ## Run the multica CLI with ARGS or MULTICA_ARGS from source
 multica: ## Run the multica CLI entrypoint directly from the Go source tree
 	cd server && go run -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)" ./cmd/multica $(MULTICA_ARGS)
 
-VERSION ?= $(shell git describe --tags --match 'v[0-9]*' --always --dirty 2>/dev/null || echo dev)
+# Fallback for a checkout with no v* tag to describe: must stay a parsable semver at or
+# above every Min*CLIVersion floor in server/pkg/agent/version.go, or from-source daemons
+# fail the capability gates. Guarded by TestDevCLIVersionClearsFloors.
+DEV_CLI_VERSION := v0.4.30-dev
+VERSION ?= $(shell git describe --tags --match 'v[0-9]*' --dirty 2>/dev/null || echo $(DEV_CLI_VERSION))
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 DATE    ?= $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
 

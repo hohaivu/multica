@@ -12,7 +12,10 @@ import "fmt"
 // A resumed session can use newCommentsSince as a delta cursor. A cold-started
 // follow-up cannot: the provider transcript is gone even though the anchor is
 // still based on the previous task's started_at. Cold runs therefore keep the
-// volume signal but read the triggering thread with --tail 30.
+// volume signal and delegate to BuildColdCommentsHint for the actual read path
+// (triggering thread first, cross-thread --roots-only scan on request) — the
+// count alone must never be paired with a read that cannot reach every thread
+// it counts.
 //
 // Since MUL-5377 the per-turn prompt (daemon.buildCommentPrompt) is the only
 // caller — the brief must not carry per-run routing state.
@@ -26,13 +29,11 @@ func BuildNewCommentsHint(issueID, triggerCommentID, triggerThreadID string, res
 	}
 	threadID := activeThreadID(triggerThreadID, triggerCommentID)
 	if !resumed {
-		if threadID != "" {
+		if cold := BuildColdCommentsHint(issueID, triggerCommentID, triggerThreadID); cold != "" {
 			return fmt.Sprintf(
-				"%d new comment(s) on this issue — don't read them all blindly. "+
-					"Read the triggering conversation first: "+
-					"`multica issue comment list %s --thread %s --tail 30 --compact --output json`.\n\n",
-				newCommentCount, issueID, threadID,
-			)
+				"%d new comment(s) on this issue — don't read them all blindly. ",
+				newCommentCount,
+			) + cold
 		}
 		// Defensive: comment triggers normally carry a trigger id. Preserve the
 		// volume signal even when an old server omitted it, then use the same

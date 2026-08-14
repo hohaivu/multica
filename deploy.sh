@@ -39,11 +39,16 @@ case " $services " in
   app_bundle="apps/desktop/dist/mac-arm64/Multica.app"
   if [ -d "$app_bundle" ]; then
     osascript -e 'quit app "Multica"' 2>/dev/null || true
-    rm -rf "apps/desktop/dist/Multica.app.old"
+    # Copy to a staging path first, then swap: if ditto fails partway
+    # (disk full, denied permission prompt, quarantine interference), the
+    # installed app is untouched instead of already moved aside with nothing
+    # to replace it.
+    rm -rf "/Applications/Multica.app.new" "apps/desktop/dist/Multica.app.old"
+    ditto "$app_bundle" /Applications/Multica.app.new
     if [ -d /Applications/Multica.app ]; then
       mv /Applications/Multica.app apps/desktop/dist/Multica.app.old
     fi
-    ditto "$app_bundle" /Applications/Multica.app
+    mv /Applications/Multica.app.new /Applications/Multica.app
     xattr -dr com.apple.quarantine /Applications/Multica.app 2>/dev/null || true
     rm -rf "apps/desktop/dist/Multica.app.old"
   fi
