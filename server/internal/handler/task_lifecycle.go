@@ -156,12 +156,11 @@ type RerunIssueRequest struct {
 // targets the issue's current assignee (agent or squad leader); if the
 // request body carries task_id, the rerun targets the agent that ran that
 // specific past task instead. The new task is flagged force_fresh_session=true:
-// the daemon claim handler skips the (agent_id, issue_id) session-resume
-// lookup so the agent starts a clean session. A user clicking rerun has just
-// judged the prior output bad — replaying the same conversation would replay
-// the same poisoned state. (Automatic retry, by contrast, intentionally
-// inherits the session — that path handles infrastructure failures, not bad
-// output.)
+// the daemon claim handler keeps the source workdir but starts a clean provider
+// session. A user clicking rerun has just judged the prior output bad —
+// replaying the same conversation would replay the same poisoned state.
+// (Automatic retry, by contrast, intentionally inherits the session — that
+// path handles infrastructure failures, not bad output.)
 func (h *Handler) RerunIssue(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	issue, ok := h.loadIssueForUser(w, r, id)

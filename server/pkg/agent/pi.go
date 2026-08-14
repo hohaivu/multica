@@ -359,8 +359,17 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 					Output: decodePiResult(evt.Result),
 				})
 
-			case "turn_end":
-				if msg := decodePiMessage(evt.Message); msg != nil && msg.Usage != nil {
+			case "message_end", "turn_end":
+				msg := decodePiMessage(evt.Message)
+				if msg != nil {
+					if errText := msg.failure(); errText != "" && finalStatus == "completed" {
+						trySend(msgCh, Message{Type: MessageError, Content: errText})
+						finalStatus = "failed"
+						finalError = errText
+					}
+					if evt.Type != "turn_end" || msg.Usage == nil {
+						break
+					}
 					model := msg.Model
 					if model == "" {
 						model = opts.Model
@@ -423,9 +432,13 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 
 		b.cfg.Logger.Info(label+" finished", "pid", cmd.Process.Pid, "status", finalStatus, "duration", duration.Round(time.Millisecond).String())
 
+		resultOutput := output.String()
+		if finalStatus != "completed" {
+			resultOutput = ""
+		}
 		resCh <- Result{
 			Status:     finalStatus,
-			Output:     output.String(),
+			Output:     resultOutput,
 			Error:      finalError,
 			DurationMs: duration.Milliseconds(),
 			SessionID:  sessionPath,
@@ -455,7 +468,7 @@ type piStreamEvent struct {
 	Result     json.RawMessage `json:"result,omitempty"`
 	IsError    bool            `json:"isError,omitempty"`
 
-	// error: Message is a string. turn_end: Message is an object.
+	// error: Message is a string. message_end / turn_end: Message is an object.
 	Message json.RawMessage `json:"message,omitempty"`
 
 	// auto_retry_end
@@ -469,9 +482,21 @@ type piAssistantMessageEvent struct {
 }
 
 type piMessage struct {
-	Role  string   `json:"role,omitempty"`
-	Model string   `json:"model,omitempty"`
-	Usage *piUsage `json:"usage,omitempty"`
+	Role         string   `json:"role,omitempty"`
+	Model        string   `json:"model,omitempty"`
+	StopReason   string   `json:"stopReason,omitempty"`
+	ErrorMessage string   `json:"errorMessage,omitempty"`
+	Usage        *piUsage `json:"usage,omitempty"`
+}
+
+func (m *piMessage) failure() string {
+	if m == nil || m.Role != "assistant" || m.StopReason != "error" {
+		return ""
+	}
+	if m.ErrorMessage != "" {
+		return m.ErrorMessage
+	}
+	return "pi assistant turn failed without details"
 }
 
 type piUsage struct {

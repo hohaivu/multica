@@ -10,16 +10,12 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// TestRerunIssuePinsForceFreshSessionForRollbackSafety locks in the rollback-safe
-// half of the MUL-4869 contract: RerunIssue ALWAYS persists
-// force_fresh_session=true on the rerun row, no matter how the source task
-// failed. The session-reuse decision is made later by the (new) claim handler
-// from the source task, so an OLD claim handler picked up mid rolling-deploy —
-// which gates the whole resume lookup on !force_fresh_session — degrades to a
-// clean start instead of resuming a different execution via the
-// (agent, issue) most-recent query. The claim-layer behaviour (workdir always
-// reused, session gated by source failure class) is asserted in
-// TestClaimTask_ManualRetryReusesWorkdir.
+// TestRerunIssuePinsForceFreshSessionForRollbackSafety locks in the MUL-4869
+// manual-rerun contract: RerunIssue ALWAYS persists force_fresh_session=true,
+// so the claim handler reuses the exact source workdir without replaying its
+// provider session. This also makes an old claim handler degrade to a clean
+// start rather than resuming a different (agent, issue) execution. The
+// claim-layer behaviour is asserted in TestClaimTask_ManualRetryReusesWorkdir.
 func TestRerunIssuePinsForceFreshSessionForRollbackSafety(t *testing.T) {
 	pool := newResolveOriginatorPool(t)
 	ctx := context.Background()
