@@ -2,30 +2,48 @@ package execenv
 
 import "fmt"
 
-// BuildNewCommentsHint returns the comment-reading pointer for the WARM path —
-// the agent ran on this issue before, so there is a since-anchor. The server
-// count is ISSUE-WIDE (every thread, not just the triggering one) and excludes
-// the triggering comment itself because that body is already injected into the
-// prompt. It ships only the COUNT and the cursor — never the comment bodies —
-// so the server stays cheap and the agent pulls details on demand.
+// BuildNewCommentsHint returns the comment-reading pointer for a run with new
+// comments. The server count is ISSUE-WIDE (every thread, not just the
+// triggering one) and excludes the triggering comment itself because that body
+// is already injected into the prompt. It ships only the COUNT and the cursor
+// when a resumed provider session has one — never the comment bodies — so the
+// server stays cheap and the agent pulls details on demand.
 //
-// The agent is told the full issue-wide volume but steered to read the
-// triggering (parent) thread FIRST instead of blindly catching up on every
-// thread. The issue-wide `--since` catch-up is kept as an explicit
-// "only if you need it" fallback.
+// A resumed session can use newCommentsSince as a delta cursor. A cold-started
+// follow-up cannot: the provider transcript is gone even though the anchor is
+// still based on the previous task's started_at. Cold runs therefore keep the
+// volume signal but read the triggering thread with --tail 30.
 //
 // Since MUL-5377 the per-turn prompt (daemon.buildCommentPrompt) is the only
 // caller — the brief must not carry per-run routing state.
 //
-// Renders nothing on cold start (no prior run → newCommentsSince empty) or when
-// there are no new comments (newCommentCount <= 0) or issueID is empty. In those
-// cases the caller falls back to BuildResumedCommentsHint (when a prior session
-// is active) or BuildColdCommentsHint.
-func BuildNewCommentsHint(issueID, triggerCommentID, triggerThreadID, newCommentsSince string, newCommentCount int) string {
-	if newCommentCount <= 0 || newCommentsSince == "" || issueID == "" {
+// Renders nothing when there are no new comments (newCommentCount <= 0) or
+// issueID is empty. Resumed runs also require newCommentsSince; cold runs do
+// not, because their full-thread read has no cursor.
+func BuildNewCommentsHint(issueID, triggerCommentID, triggerThreadID string, resumed bool, newCommentsSince string, newCommentCount int) string {
+	if newCommentCount <= 0 || issueID == "" || (resumed && newCommentsSince == "") {
 		return ""
 	}
 	threadID := activeThreadID(triggerThreadID, triggerCommentID)
+	if !resumed {
+		if threadID != "" {
+			return fmt.Sprintf(
+				"%d new comment(s) on this issue — don't read them all blindly. "+
+					"Read the triggering conversation first: "+
+					"`multica issue comment list %s --thread %s --tail 30 --compact --output json`.\n\n",
+				newCommentCount, issueID, threadID,
+			)
+		}
+		// Defensive: comment triggers normally carry a trigger id. Preserve the
+		// volume signal even when an old server omitted it, then use the same
+		// bounded discussion workflow as the caller's final fallback.
+		return fmt.Sprintf(
+			"%d new comment(s) on this issue. Read the discussion: "+
+				"scan with `multica issue comment list %s --roots-only --summary --compact --output json`, "+
+				"then expand what matters with `--thread <thread-id> --tail 30`.\n\n",
+			newCommentCount, issueID,
+		)
+	}
 	// When we know the triggering thread, steer the agent to read THAT thread
 	// first rather than blindly pulling every new comment issue-wide. The
 	// issue-wide --since catch-up is demoted to an only-if-needed fallback,

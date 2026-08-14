@@ -47,6 +47,20 @@ func TestPluginsV1DefaultsOff(t *testing.T) {
 	}
 }
 
+func TestAgentResumePriorSessionDefaultsOffAndCanBeEnabled(t *testing.T) {
+	ctx := context.Background()
+	if AgentResumePriorSessionEnabled(ctx, nil) {
+		t.Fatal("agent_resume_prior_session must default to disabled")
+	}
+
+	provider := featureflag.NewStaticProvider()
+	provider.Set(AgentResumePriorSession, featureflag.Rule{Default: true})
+	flags := featureflag.NewService(provider)
+	if !AgentResumePriorSessionEnabled(ctx, flags) {
+		t.Fatal("agent_resume_prior_session should enable the rollback behavior when configured")
+	}
+}
+
 func TestPrivatePluginsV1DefaultsOff(t *testing.T) {
 	flags := EvaluateFrontendPublicFlags(context.Background(), nil)
 	if flags[PrivatePluginsV1] {

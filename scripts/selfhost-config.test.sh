@@ -47,6 +47,14 @@ require_config "$config" 'FRONTEND_ORIGIN: http://localhost:3100'
 require_config "$config" 'GOOGLE_REDIRECT_URI: http://localhost:3100/auth/callback'
 require_config "$config" 'MULTICA_APP_URL: http://localhost:3100'
 require_config "$config" 'SMTP_FROM_EMAIL: multica@example.com'
+require_config "$config" 'FF_AGENT_RESUME_PRIOR_SESSION: "false"'
+
+# The rollback switch is forwarded to the backend and can be enabled without
+# changing the Compose file.
+enabled_env="$tmp_dir/.env.enabled"
+sed 's/^FF_AGENT_RESUME_PRIOR_SESSION=false/FF_AGENT_RESUME_PRIOR_SESSION=true/' .env.example >"$enabled_env"
+enabled_config="$(docker compose --env-file "$enabled_env" -f docker-compose.selfhost.yml config)"
+require_config "$enabled_config" 'FF_AGENT_RESUME_PRIOR_SESSION: "true"'
 
 for script in scripts/dev.sh scripts/check.sh; do
   if ! grep -Fq '. scripts/local-env.sh' "$script"; then

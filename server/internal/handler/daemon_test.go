@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/daemonws"
+	"github.com/multica-ai/multica/server/internal/featureflags"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -3358,6 +3359,99 @@ func TestChatSessionRuntimeBackfillRequiresMatchingSessionID(t *testing.T) {
 	}
 }
 
+func TestClaimTask_IssuePriorSessionFlagRestoresResume(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	withFeatureFlag(t, testHandler, featureflags.AgentResumePriorSession, true)
+	ctx := context.Background()
+	agentID, runtimeID, daemonID := createRuntimeGuardAgent(t, ctx)
+	var issueID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (workspace_id, title, status, priority, creator_id, creator_type, number, position)
+		VALUES ($1, 'resume flag issue fixture', 'in_progress', 'none', $2, 'member', 81208, 0)
+		RETURNING id
+	`, testWorkspaceID, testUserID).Scan(&issueID); err != nil {
+		t.Fatalf("setup: create issue: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID) })
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, completed_at, session_id, work_dir)
+		VALUES ($1, $2, $3, 'completed', 0, now(), 'flag-session', '/tmp/flag-workdir')
+	`, agentID, runtimeID, issueID); err != nil {
+		t.Fatalf("setup: create prior task: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority)
+		VALUES ($1, $2, $3, 'queued', 0)
+	`, agentID, runtimeID, issueID); err != nil {
+		t.Fatalf("setup: create follow-up task: %v", err)
+	}
+	task := claimTaskForRuntimeGuard(t, runtimeID, daemonID)
+	if task.PriorSessionID != "flag-session" {
+		t.Fatalf("flag-on PriorSessionID = %q, want flag-session", task.PriorSessionID)
+	}
+	if task.PriorWorkDir != "/tmp/flag-workdir" {
+		t.Fatalf("flag-on PriorWorkDir = %q, want /tmp/flag-workdir", task.PriorWorkDir)
+	}
+}
+
+func TestClaimTask_IssueColdStartUsesLatestWorkdirWithoutSession(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	agentID, runtimeID, daemonID := createRuntimeGuardAgent(t, ctx)
+
+	var issueID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (workspace_id, title, status, priority, creator_id, creator_type, number, position)
+		VALUES ($1, 'latest workdir without session fixture', 'in_progress', 'none', $2, 'member', 81209, 0)
+		RETURNING id
+	`, testWorkspaceID, testUserID).Scan(&issueID); err != nil {
+		t.Fatalf("setup: create issue: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID) })
+
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO agent_task_queue (
+			agent_id, runtime_id, issue_id, status, priority,
+			started_at, completed_at, session_id, work_dir
+		)
+		VALUES ($1, $2, $3, 'completed', 0,
+			now() - interval '2 minutes', now() - interval '2 minutes',
+			'older-session', '/tmp/older-workdir')
+	`, agentID, runtimeID, issueID); err != nil {
+		t.Fatalf("setup: create older task: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO agent_task_queue (
+			agent_id, runtime_id, issue_id, status, priority,
+			started_at, completed_at, session_id, work_dir, failure_reason
+		)
+		VALUES ($1, $2, $3, 'failed', 0,
+			now() - interval '1 minute', now() - interval '1 minute',
+			NULL, '/tmp/latest-workdir', 'timeout')
+	`, agentID, runtimeID, issueID); err != nil {
+		t.Fatalf("setup: create latest sessionless task: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority)
+		VALUES ($1, $2, $3, 'queued', 0)
+	`, agentID, runtimeID, issueID); err != nil {
+		t.Fatalf("setup: create follow-up task: %v", err)
+	}
+
+	task := claimTaskForRuntimeGuard(t, runtimeID, daemonID)
+	if task.PriorSessionID != "" {
+		t.Fatalf("cold start: expected empty PriorSessionID, got %q", task.PriorSessionID)
+	}
+	if task.PriorWorkDir != "/tmp/latest-workdir" {
+		t.Fatalf("cold start: expected latest PriorWorkDir, got %q", task.PriorWorkDir)
+	}
+}
+
 func TestClaimTask_IssuePriorSessionRuntimeGuard(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
@@ -3447,8 +3541,8 @@ func TestClaimTask_IssuePriorSessionRuntimeGuard(t *testing.T) {
 	}
 
 	task = claimTaskForRuntimeGuard(t, runtimeID, daemonID)
-	if task.PriorSessionID != "same-runtime-session" {
-		t.Fatalf("runtime match: expected PriorSessionID='same-runtime-session', got %q", task.PriorSessionID)
+	if task.PriorSessionID != "" {
+		t.Fatalf("runtime match: expected empty PriorSessionID (cold-start default), got %q", task.PriorSessionID)
 	}
 	if task.PriorWorkDir != "/tmp/same-runtime-workdir" {
 		t.Fatalf("runtime match: expected PriorWorkDir='/tmp/same-runtime-workdir', got %q", task.PriorWorkDir)
@@ -3493,10 +3587,10 @@ func TestClaimTask_IssuePriorSessionRuntimeGuard(t *testing.T) {
 	}
 
 	task = claimTaskForRuntimeGuard(t, runtimeID, daemonID)
-	// Comment-triggered tasks now resume the prior session by default (same
-	// runtime), so the agent keeps the issue's conversation context across turns.
-	if task.PriorSessionID != "comment-prior-session" {
-		t.Fatalf("comment trigger: expected PriorSessionID='comment-prior-session' (resume default-on), got %q", task.PriorSessionID)
+	// Comment-triggered follow-ups cold-start by default while retaining the
+	// prior workdir for uncommitted files and the written brief.
+	if task.PriorSessionID != "" {
+		t.Fatalf("comment trigger: expected empty PriorSessionID (cold-start default), got %q", task.PriorSessionID)
 	}
 	if task.PriorWorkDir != "/tmp/comment-prior-workdir" {
 		t.Fatalf("comment trigger: expected PriorWorkDir='/tmp/comment-prior-workdir', got %q", task.PriorWorkDir)
@@ -3736,11 +3830,75 @@ func TestClaimTask_ChatPriorSessionRuntimeGuard(t *testing.T) {
 	}
 
 	task = claimTaskForRuntimeGuard(t, runtimeID, daemonID)
-	if task.PriorSessionID != "same-chat-session" {
-		t.Fatalf("chat runtime match: expected PriorSessionID='same-chat-session', got %q", task.PriorSessionID)
+	if task.PriorSessionID != "" {
+		t.Fatalf("chat runtime match: expected empty PriorSessionID (cold-start default), got %q", task.PriorSessionID)
 	}
 	if task.PriorWorkDir != "/tmp/same-chat-workdir" {
 		t.Fatalf("chat runtime match: expected PriorWorkDir='/tmp/same-chat-workdir', got %q", task.PriorWorkDir)
+	}
+}
+
+func TestClaimTask_ChatColdStartUsesLatestWorkdirWithoutSession(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	agentID, runtimeID, daemonID := createRuntimeGuardAgent(t, ctx)
+
+	var chatSessionID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO chat_session (
+			workspace_id, agent_id, creator_id, title,
+			runtime_id, work_dir
+		)
+		VALUES ($1, $2, $3, 'latest chat workdir without session', $4, '/tmp/stale-chat-workdir')
+		RETURNING id
+	`, testWorkspaceID, agentID, testUserID, runtimeID).Scan(&chatSessionID); err != nil {
+		t.Fatalf("setup: create chat session: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE chat_session_id = $1`, chatSessionID)
+		testPool.Exec(ctx, `DELETE FROM chat_session WHERE id = $1`, chatSessionID)
+	})
+
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO agent_task_queue (
+			agent_id, runtime_id, chat_session_id,
+			status, priority, started_at, completed_at,
+			session_id, work_dir
+		)
+		VALUES ($1, $2, $3, 'completed', 0,
+			now() - interval '2 minutes', now() - interval '2 minutes',
+			'older-chat-session', '/tmp/older-chat-workdir')
+	`, agentID, runtimeID, chatSessionID); err != nil {
+		t.Fatalf("setup: create older chat task: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO agent_task_queue (
+			agent_id, runtime_id, chat_session_id,
+			status, priority, started_at, completed_at,
+			session_id, work_dir, failure_reason
+		)
+		VALUES ($1, $2, $3, 'failed', 0,
+			now() - interval '1 minute', now() - interval '1 minute',
+			NULL, '/tmp/latest-chat-workdir', 'timeout')
+	`, agentID, runtimeID, chatSessionID); err != nil {
+		t.Fatalf("setup: create latest sessionless chat task: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, chat_session_id, status, priority)
+		VALUES ($1, $2, $3, 'queued', 0)
+	`, agentID, runtimeID, chatSessionID); err != nil {
+		t.Fatalf("setup: create chat follow-up task: %v", err)
+	}
+
+	task := claimTaskForRuntimeGuard(t, runtimeID, daemonID)
+	if task.PriorSessionID != "" {
+		t.Fatalf("cold chat start: expected empty PriorSessionID, got %q", task.PriorSessionID)
+	}
+	if task.PriorWorkDir != "/tmp/latest-chat-workdir" {
+		t.Fatalf("cold chat start: expected latest PriorWorkDir, got %q", task.PriorWorkDir)
 	}
 }
 
@@ -4037,8 +4195,8 @@ func TestClaimTask_ChatLegacyNullRuntimeFallsBackToTaskRow(t *testing.T) {
 	}
 
 	task := claimTaskForRuntimeGuard(t, runtimeID, daemonID)
-	if task.PriorSessionID != "legacy-fallback-session" {
-		t.Fatalf("legacy fallback: expected PriorSessionID='legacy-fallback-session', got %q", task.PriorSessionID)
+	if task.PriorSessionID != "" {
+		t.Fatalf("legacy fallback: expected empty PriorSessionID (cold-start default), got %q", task.PriorSessionID)
 	}
 	if task.PriorWorkDir != "/tmp/legacy-fallback-workdir" {
 		t.Fatalf("legacy fallback: expected PriorWorkDir='/tmp/legacy-fallback-workdir', got %q", task.PriorWorkDir)
@@ -4729,10 +4887,9 @@ func TestClaimTaskByRuntime_CommentTaskOmitsDeltaWhenOnlyTriggerIsNew(t *testing
 	}
 }
 
-// TestClaimTaskByRuntime_CommentResumeDefaultOn verifies comment-triggered tasks
-// resume the prior session by default (no env flag), as long as the prior
-// session ran on the same runtime.
-func TestClaimTaskByRuntime_CommentResumeDefaultOn(t *testing.T) {
+// TestClaimTaskByRuntime_CommentResumeDefaultOff verifies comment-triggered
+// follow-ups cold-start by default while preserving the prior workdir.
+func TestClaimTaskByRuntime_CommentResumeDefaultOff(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
 	}
@@ -4755,8 +4912,8 @@ func TestClaimTaskByRuntime_CommentResumeDefaultOn(t *testing.T) {
 	createCommentTriggeredClaimTask(t, ctx, agentID, runtimeID, issueID, nil)
 
 	resp := claimCommentTask(t, runtimeID, "comment-resume-default")
-	if resp.Task.PriorSessionID != priorSession {
-		t.Errorf("prior_session_id = %q, want %q (comment resume is default-on)", resp.Task.PriorSessionID, priorSession)
+	if resp.Task.PriorSessionID != "" {
+		t.Errorf("prior_session_id = %q, want empty (comment resume is default-off)", resp.Task.PriorSessionID)
 	}
 }
 

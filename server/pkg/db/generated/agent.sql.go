@@ -3709,6 +3709,31 @@ func (q *Queries) GetLastTaskStartedAtForIssueAndAgent(ctx context.Context, arg 
 	return started_at, err
 }
 
+const getLastTaskWorkDir = `-- name: GetLastTaskWorkDir :one
+SELECT work_dir FROM agent_task_queue
+WHERE agent_id = $1
+  AND issue_id = $2
+  AND status IN ('completed', 'failed', 'cancelled')
+  AND work_dir IS NOT NULL
+ORDER BY COALESCE(completed_at, started_at, dispatched_at, created_at) DESC, id DESC
+LIMIT 1
+`
+
+type GetLastTaskWorkDirParams struct {
+	AgentID pgtype.UUID `json:"agent_id"`
+	IssueID pgtype.UUID `json:"issue_id"`
+}
+
+// Returns the newest terminal workdir for an (agent_id, issue_id) pair.
+// Workdir continuity is independent from provider-session continuity: a task
+// can preserve files while deliberately withholding or abandoning its session.
+func (q *Queries) GetLastTaskWorkDir(ctx context.Context, arg GetLastTaskWorkDirParams) (pgtype.Text, error) {
+	row := q.db.QueryRow(ctx, getLastTaskWorkDir, arg.AgentID, arg.IssueID)
+	var work_dir pgtype.Text
+	err := row.Scan(&work_dir)
+	return work_dir, err
+}
+
 const getLatestChatTaskRolloutMissing = `-- name: GetLatestChatTaskRolloutMissing :one
 SELECT COALESCE(session_rollout_missing, FALSE) FROM agent_task_queue
 WHERE chat_session_id = $1

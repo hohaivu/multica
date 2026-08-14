@@ -177,6 +177,40 @@ func TestGetLastTaskSessionFallsBackWhenLatestSessionBlanked(t *testing.T) {
 	}
 }
 
+func TestGetLastTaskWorkDirKeepsNewestSessionlessTask(t *testing.T) {
+	if testPool == nil {
+		t.Skip("no database connection")
+	}
+
+	issueID, agentID, runtimeID := setupRerunTestFixture(t)
+	t.Cleanup(func() { cleanupRerunFixture(t, issueID) })
+
+	ctx := context.Background()
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, completed_at, session_id, work_dir)
+		VALUES ($1, $2, $3, 'completed', 0, now() - interval '2 minutes', now() - interval '2 minutes', 'OLDER-SESSION', '/tmp/older-workdir')
+	`, agentID, runtimeID, issueID); err != nil {
+		t.Fatalf("insert older task: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, completed_at, session_id, work_dir, failure_reason)
+		VALUES ($1, $2, $3, 'failed', 0, now() - interval '1 minute', now() - interval '1 minute', NULL, '/tmp/newest-workdir', 'timeout')
+	`, agentID, runtimeID, issueID); err != nil {
+		t.Fatalf("insert newest sessionless task: %v", err)
+	}
+
+	workDir, err := db.New(testPool).GetLastTaskWorkDir(ctx, db.GetLastTaskWorkDirParams{
+		AgentID: pgtype.UUID{Bytes: parseUUIDBytes(agentID), Valid: true},
+		IssueID: pgtype.UUID{Bytes: parseUUIDBytes(issueID), Valid: true},
+	})
+	if err != nil {
+		t.Fatalf("GetLastTaskWorkDir failed: %v", err)
+	}
+	if !workDir.Valid || workDir.String != "/tmp/newest-workdir" {
+		t.Fatalf("expected newest sessionless workdir, got %+v", workDir)
+	}
+}
+
 // TestGetLastTaskSessionExcludesEmptyHistoryMessage is the SQL half of the
 // GH #6066 fix. The daemon now classifies an empty-message rejection as
 // api_invalid_request, but daemons upgrade on their own cadence — a self-host

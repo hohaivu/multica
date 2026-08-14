@@ -30,8 +30,9 @@ The chain is:
 3. server wakes the runtime over daemon websocket when possible;
 4. daemon polls/claims the task;
 5. server returns task context, repos, project resources, prior session/workdir hints, and task token;
-6. daemon prepares a workdir and launches the provider CLI;
-7. `multica repo checkout` talks to the local daemon, not directly to GitHub.
+6. daemon prepares a workdir and launches the provider CLI; follow-up issue/comment and chat tasks cold-start by default while reusing a prior workdir when the claim has one. The process-global `agent_resume_prior_session` rollback switch restores provider-session resume when enabled; it is not a per-workspace rollout;
+7. a cold-start chat follow-up can recover the bounded stored transcript with `multica chat history`; an opening web-chat turn does not need that read;
+8. `multica repo checkout` talks to the local daemon, not directly to GitHub.
 
 ## CLI
 
@@ -48,6 +49,8 @@ multica repo checkout <url> --ref <branch-or-sha>
 `runtime update` and `runtime delete` are writes. Starting a runtime update is limited to its owner or a workspace owner/admin; the original initiator may keep polling that specific in-flight request if their admin role changes. `runtime delete` removes a runtime registration; if active agents are still bound, it refuses unless the user explicitly passes `--cascade`, which unbinds those agents and cancels their queued/running tasks before deleting the runtime. Unbinding keeps the agents and everything they own — instructions, skills, chats, labels, channel installations, autopilots and task history — and only clears `agent.runtime_id`; an unbound agent cannot run until it is bound to a runtime again (`multica agent update <id> --runtime-id <runtime-id>`), and every trigger path refuses it with `agent_runtime_required`. `repo checkout` creates a dedicated branch in the task working directory. Most runtimes use a linked worktree; Linux and Windows Codex use task-local Git metadata so a task can stage and commit without making the shared `.repos` cache writable.
 
 `repo checkout` requires `MULTICA_DAEMON_PORT`; it is intended to run inside a daemon task. If absent, you are not in the normal agent checkout path. When a project `github_repo` resource has `resource_ref.ref`, `repo checkout <url>` uses that ref by default for the current task; an explicit `repo checkout <url> --ref <branch-or-sha>` overrides it.
+
+For a web chat or transcript-backed channel, `multica chat history --output json` reads the current task's stored transcript on a cold-started follow-up. It takes no session id because the task token supplies the scope. The default page is bounded; use the returned `next_cursor` as `--before` to read older messages. A Slack-backed session instead gets the channel overview; use `multica chat thread <thread_id>` to expand a thread. Do not use `multica chat thread` for a transcript-only session.
 
 ## Task CLI boundary
 

@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/multica-ai/multica/server/internal/featureflags"
 )
 
 // claimContinuityGapProbe decodes just the continuity-gap fields off a claim
@@ -47,6 +49,7 @@ func TestClaimTaskByRuntime_ChatRolloutMissingDisclosesGap(t *testing.T) {
 		t.Skip("database not available")
 	}
 	ctx := context.Background()
+	withFeatureFlag(t, testHandler, featureflags.AgentResumePriorSession, true)
 
 	agentID := createHandlerTestAgent(t, "ChatGapClaimAgent", []byte("[]"))
 	runtimeID := handlerTestRuntimeID(t)

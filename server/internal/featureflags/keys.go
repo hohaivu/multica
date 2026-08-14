@@ -23,6 +23,15 @@ const (
 	// gate pinned Task/Run execution: disabling discovery and management must not
 	// mutate an immutable execution manifest that is already in flight.
 	PluginsV1 = "plugins_v1"
+	// AgentResumePriorSession restores pre-cold-start behavior: a follow-up task
+	// on the same (agent, issue) or chat session resumes the previous CLI
+	// session instead of cold-starting. Off by default — resumed transcripts grow
+	// without bound and dominate per-call input tokens. The daemon claim path
+	// evaluates this from process-wide configuration without a workspace
+	// EvalContext, so FF_AGENT_RESUME_PRIOR_SESSION / its configured default is a
+	// process-global rollback switch, not a per-workspace rollout. Delete this
+	// key once the cold default has baked.
+	AgentResumePriorSession = "agent_resume_prior_session"
 	// PrivatePluginsV1 independently gates workspace-uploaded, unsigned Skill
 	// Plugins. It is effective only while the base PluginsV1 contract is also on.
 	PrivatePluginsV1 = "private_plugins_v1"
@@ -60,6 +69,10 @@ func ComposioMCPAppsEnabled(ctx context.Context, flags *featureflag.Service) boo
 
 func PluginsV1Enabled(ctx context.Context, flags *featureflag.Service) bool {
 	return flags.IsEnabled(ctx, PluginsV1, false)
+}
+
+func AgentResumePriorSessionEnabled(ctx context.Context, flags *featureflag.Service) bool {
+	return flags.IsEnabled(ctx, AgentResumePriorSession, false)
 }
 
 func PrivatePluginsV1Enabled(ctx context.Context, flags *featureflag.Service) bool {
