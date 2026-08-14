@@ -255,7 +255,7 @@ func TestPerRunCommentContextStaysOutOfBrief(t *testing.T) {
 	}
 
 	// The helper that now feeds the per-turn prompt is unchanged.
-	hint := BuildNewCommentsHint(issueID, "reply-abc", "thread-abc", since, 4)
+	hint := BuildNewCommentsHint(issueID, "reply-abc", "thread-abc", true, since, 4)
 	for _, want := range []string{
 		"4 new comment(s) on this issue since your last run",
 		"blindly",

@@ -38,12 +38,12 @@ func TestChannelNewCommandE2EStartsFreshProviderSession(t *testing.T) {
 		wantPriorWorkDir string
 	}{
 		{
-			name:             "normal message resumes existing provider context",
+			name:             "normal message cold-starts but reuses workdir",
 			channelType:      channel.Type("slack"),
 			text:             "what model are you?",
 			commandText:      "what model are you?",
 			wantStoredText:   "what model are you?",
-			wantPriorSession: "old-provider-session",
+			wantPriorSession: "",
 			wantPriorWorkDir: "/tmp/old-provider-workdir",
 		},
 		{

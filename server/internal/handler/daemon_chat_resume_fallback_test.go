@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"errors"
+	"github.com/multica-ai/multica/server/internal/featureflags"
 	"net/http"
 	"strings"
 	"testing"
@@ -60,6 +61,7 @@ func TestClaimTaskChatCompletePointerSkipsSessionFallbackQuery(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
 	}
+	withFeatureFlag(t, testHandler, featureflags.AgentResumePriorSession, true)
 
 	ctx := context.Background()
 	agentID, runtimeID, daemonID := createRuntimeGuardAgent(t, ctx)
@@ -140,6 +142,7 @@ func TestClaimTaskChatInputLoadFailureSkipsResumeQueries(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
 	}
+	withFeatureFlag(t, testHandler, featureflags.AgentResumePriorSession, true)
 
 	ctx := context.Background()
 	agentID, runtimeID, daemonID := createRuntimeGuardAgent(t, ctx)

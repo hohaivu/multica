@@ -1084,6 +1084,17 @@ WHERE session_id NOT IN (SELECT session_id FROM retired_sessions)
 ORDER BY completed_at DESC
 LIMIT 1;
 
+-- name: GetLastChatTaskWorkDir :one
+-- Returns the newest terminal workdir for a chat session independently of
+-- provider-session availability. A failed/cancelled task may retain files even
+-- when its session pointer is absent or deliberately retired.
+SELECT work_dir FROM agent_task_queue
+WHERE chat_session_id = $1
+  AND status IN ('completed', 'failed', 'cancelled')
+  AND work_dir IS NOT NULL
+ORDER BY COALESCE(completed_at, started_at, dispatched_at, created_at) DESC, id DESC
+LIMIT 1;
+
 -- name: HasActiveChatTaskForSession :one
 -- True while ANY task — a normal user turn OR a background quick-actions
 -- regenerate — is in flight for the session (contrast GetPendingChatTask, which

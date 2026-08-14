@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/multica-ai/multica/server/internal/featureflags"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/testutil"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -35,6 +36,7 @@ func TestClaimTask_ChatResumesCancelledTurnSession(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
+	withFeatureFlag(t, testHandler, featureflags.AgentResumePriorSession, true)
 
 	ctx := context.Background()
 	agentID, runtimeID, daemonID := createRuntimeGuardAgent(t, ctx)
@@ -114,6 +116,7 @@ func TestClaimTask_IssueResumesCancelledTaskSession(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
+	withFeatureFlag(t, testHandler, featureflags.AgentResumePriorSession, true)
 
 	ctx := context.Background()
 	agentID, runtimeID, daemonID := createRuntimeGuardAgent(t, ctx)
@@ -245,6 +248,7 @@ func TestCancelTask_PointerAdvanceIsAtomicWithStatusFlip(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
+	withFeatureFlag(t, testHandler, featureflags.AgentResumePriorSession, true)
 
 	ctx := context.Background()
 	agentID, runtimeID, daemonID := createRuntimeGuardAgent(t, ctx)
@@ -330,6 +334,7 @@ func TestPinTaskSession_LateCancelledPinAdvancesChatPointer(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
+	withFeatureFlag(t, testHandler, featureflags.AgentResumePriorSession, true)
 
 	ctx := context.Background()
 	agentID, runtimeID, daemonID := createRuntimeGuardAgent(t, ctx)
@@ -421,6 +426,7 @@ func TestPinTaskSession_PointerAdvanceIsAtomicWithPin(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
+	withFeatureFlag(t, testHandler, featureflags.AgentResumePriorSession, true)
 
 	ctx := context.Background()
 	agentID, runtimeID, daemonID := createRuntimeGuardAgent(t, ctx)

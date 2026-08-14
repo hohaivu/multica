@@ -364,7 +364,7 @@ func buildCommentPrompt(task Task, provider string) string {
 	// injected, so don't force a duplicate thread read. Cold path: read the
 	// triggering thread, not the flat timeline. Final fallback (no trigger id,
 	// shouldn't happen here): plain read.
-	if hint := execenv.BuildNewCommentsHint(task.IssueID, task.TriggerCommentID, task.TriggerThreadID, task.NewCommentsSince, task.NewCommentCount); hint != "" {
+	if hint := execenv.BuildNewCommentsHint(task.IssueID, task.TriggerCommentID, task.TriggerThreadID, task.PriorSessionID != "", task.NewCommentsSince, task.NewCommentCount); hint != "" {
 		b.WriteString(hint)
 	} else if task.PriorSessionID != "" {
 		b.WriteString(execenv.BuildResumedCommentsHint(task.IssueID, task.TriggerCommentID, task.TriggerThreadID))
@@ -475,8 +475,8 @@ func buildChatPrompt(task Task) string {
 	// Channel awareness (MUL-3871). When the session is backed by an IM channel,
 	// the agent must KNOW it is operating inside that channel — otherwise an ask
 	// like "what did you just talk about" sends it to read Multica instead of the
-	// channel conversation. A web-only chat session gets no such block — its
-	// history is the Multica chat_session the agent already resumes.
+	// channel conversation. A web-only chat session gets a shorter transcript
+	// pointer below because its history lives in the Multica chat_session.
 	//
 	// The history half: `multica chat history` is served by handler/chat_history.go,
 	// which reads the live channel for Slack and falls back to the stored
@@ -522,6 +522,12 @@ func buildChatPrompt(task Task) string {
 		// Scoped to process, not results — a completion confirmation IS the deliverable.
 		fmt.Fprintf(&b, "Reply to %s with the final outcome only. Do NOT narrate planned or in-progress steps (\"我先读取…\"); completed actions are part of the outcome.\n", platform)
 		b.WriteString("\n")
+	} else if task.PriorSessionID == "" && task.PriorWorkDir != "" {
+		// A cold-started follow-up may have only the current message in the
+		// provider prompt. A non-empty prior workdir is the claim's signal that
+		// this is a follow-up rather than the session's opening turn; avoid an
+		// unnecessary history round trip for a brand-new chat.
+		b.WriteString("The message below may be only what triggered you — read earlier context with `multica chat history`.\n")
 	}
 	if task.Agent != nil && len(task.Agent.Skills) > 0 {
 		refs := ExtractSlashSkills(task.ChatMessage)

@@ -3,6 +3,8 @@ package featureflags
 import (
 	"context"
 	"testing"
+
+	"github.com/multica-ai/multica/server/pkg/featureflag"
 )
 
 func TestResourceLabelsCompatDecisionStaysEnabled(t *testing.T) {
@@ -42,6 +44,20 @@ func TestPluginsV1DefaultsOff(t *testing.T) {
 	flags := EvaluateFrontendPublicFlags(context.Background(), nil)
 	if flags[PluginsV1] {
 		t.Fatal("plugins_v1 must stay disabled unless explicitly enabled")
+	}
+}
+
+func TestAgentResumePriorSessionDefaultsOffAndCanBeEnabled(t *testing.T) {
+	ctx := context.Background()
+	if AgentResumePriorSessionEnabled(ctx, nil) {
+		t.Fatal("agent_resume_prior_session must default to disabled")
+	}
+
+	provider := featureflag.NewStaticProvider()
+	provider.Set(AgentResumePriorSession, featureflag.Rule{Default: true})
+	flags := featureflag.NewService(provider)
+	if !AgentResumePriorSessionEnabled(ctx, flags) {
+		t.Fatal("agent_resume_prior_session should enable the rollback behavior when configured")
 	}
 }
 

@@ -41,6 +41,15 @@ const (
 	// true rollback requires migrating those issues back to built-in statuses
 	// first (migration 337's down direction refuses precisely because of this).
 	CustomIssueStatuses = "custom_issue_statuses"
+	// AgentResumePriorSession restores pre-cold-start behavior: a follow-up task
+	// on the same (agent, issue) or chat session resumes the previous CLI
+	// session instead of cold-starting. Off by default — resumed transcripts grow
+	// without bound and dominate per-call input tokens. The daemon claim path
+	// evaluates this from process-wide configuration without a workspace
+	// EvalContext, so FF_AGENT_RESUME_PRIOR_SESSION / its configured default is a
+	// process-global rollback switch, not a per-workspace rollout. Delete this
+	// key once the cold default has baked.
+	AgentResumePriorSession = "agent_resume_prior_session"
 	// agentBuilderCompat is no longer a release flag. Keep publishing the key
 	// as enabled so installed desktop clients that still gate the AI creation
 	// entry on this config decision receive the permanently enabled behavior.
@@ -84,6 +93,10 @@ func PluginsV1Enabled(ctx context.Context, flags *featureflag.Service) bool {
 // value its older pods cannot interpret.
 func CustomIssueStatusesEnabled(ctx context.Context, flags *featureflag.Service) bool {
 	return flags.IsEnabled(ctx, CustomIssueStatuses, false)
+}
+
+func AgentResumePriorSessionEnabled(ctx context.Context, flags *featureflag.Service) bool {
+	return flags.IsEnabled(ctx, AgentResumePriorSession, false)
 }
 
 func EvaluateFrontendPublicFlags(ctx context.Context, flags *featureflag.Service) map[string]bool {

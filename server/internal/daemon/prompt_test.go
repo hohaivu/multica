@@ -494,13 +494,14 @@ func TestBuildChatPromptChannelAwareness(t *testing.T) {
 		}
 	})
 
-	t.Run("web-only session has no channel block", func(t *testing.T) {
+	t.Run("web-only follow-up points to transcript history", func(t *testing.T) {
 		out := buildChatPrompt(Task{
 			ChatSessionID: "sess-1",
-			ChatMessage:   "hi",
+			PriorWorkDir:  "/tmp/prior-workdir",
+			ChatMessage:   "hi again",
 		})
-		if strings.Contains(out, "multica chat history") {
-			t.Fatalf("web-only chat prompt should not mention channel history, got:\n%s", out)
+		if !strings.Contains(out, "The message below may be only what triggered you — read earlier context with `multica chat history`.") {
+			t.Fatalf("web-only follow-up missing transcript history pointer, got:\n%s", out)
 		}
 	})
 
@@ -623,26 +624,40 @@ func TestBuildChatPromptTwoLayerChannelPolicy(t *testing.T) {
 	cases := []struct {
 		name          string
 		channelType   string
+		priorWorkDir  string
 		deliversFiles bool
 		wantUpload    bool
 		wantHistory   bool
 		wantPhrases   []string
 	}{
 		{
-			name:        "direct chat: upload, no history",
+			name:        "direct chat opening: upload, no transcript read",
 			channelType: "",
 			wantUpload:  true,
 			wantHistory: false,
 		},
 		{
 			// A web chat is not made file-less by a stray capability flag, and
-			// not made file-carrying by one either — it has its own branch.
-			name:          "direct chat ignores the channel capability",
+			// not made file-carrying by one either — it has its own branch. This
+			// opening turn still has no earlier transcript to recover.
+			name:          "direct chat opening ignores the channel capability",
 			channelType:   "",
 			deliversFiles: true,
 			wantUpload:    true,
 			wantHistory:   false,
 			wantPhrases:   []string{"appears as an attachment card below it"},
+		},
+		{
+			name:          "direct chat follow-up: upload, has transcript history",
+			channelType:   "",
+			priorWorkDir:  "/tmp/prior-workdir",
+			deliversFiles: false,
+			wantUpload:    true,
+			wantHistory:   true,
+			wantPhrases:   []string{"read earlier context with `multica chat history`"},
+			// The matrix below supplies the default Task. Keep this case's
+			// follow-up marker in the dedicated test above; this row documents the
+			// independent policy rather than constructing a second prompt shape.
 		},
 		{
 			name:        "slack: no upload, has history",
@@ -727,6 +742,7 @@ func TestBuildChatPromptTwoLayerChannelPolicy(t *testing.T) {
 				ChatSessionID:            "sess-1",
 				ChatChannelType:          tc.channelType,
 				ChatChannelDeliversFiles: tc.deliversFiles,
+				PriorWorkDir:             tc.priorWorkDir,
 				ChatMessage:              "hi",
 			})
 			if got := strings.Contains(out, uploadGuidance); got != tc.wantUpload {
@@ -1060,11 +1076,10 @@ func TestBuildPromptNonSquadLeaderNoRule(t *testing.T) {
 	}
 }
 
-// TestBuildPromptNewCommentsHint pins that a comment-triggered task whose agent
-// ran before on this issue (NewCommentsSince set, NewCommentCount > 0) gets the
-// since-delta hint with the ISSUE-WIDE new-comment count, but is steered to read
-// the triggering (parent) thread first rather than blindly pulling every new
-// comment.
+// TestBuildPromptNewCommentsHint pins that a resumed comment-triggered task
+// (NewCommentsSince set, NewCommentCount > 0) gets the since-delta hint with the
+// ISSUE-WIDE new-comment count, but is steered to read the triggering (parent)
+// thread first rather than blindly pulling every new comment.
 func TestBuildPromptNewCommentsHint(t *testing.T) {
 	const (
 		issueID = "issue-new-1"
@@ -1076,6 +1091,7 @@ func TestBuildPromptNewCommentsHint(t *testing.T) {
 		TriggerThreadID:       "thread-root-1",
 		TriggerCommentContent: "please look",
 		TriggerAuthorType:     "member",
+		PriorSessionID:        "session-123",
 		NewCommentCount:       3,
 		NewCommentsSince:      since,
 	}
@@ -1111,10 +1127,10 @@ func TestBuildPromptNewCommentsHint(t *testing.T) {
 	}
 }
 
-// TestBuildPromptColdStartThreadRead pins the cold-start case: no prior run means
-// no since anchor (NewCommentsSince empty), so we suppress the delta hint and
-// instead point the agent at the triggering CONVERSATION (--thread <trigger>
-// --tail 30) rather than dumping the flat timeline.
+// TestBuildPromptColdStartThreadRead pins the cold-start case: no prior run and
+// no new-comment count means there is no delta hint, so we point the agent at
+// the triggering CONVERSATION (--thread <trigger> --tail 30) rather than
+// dumping the flat timeline.
 func TestBuildPromptColdStartThreadRead(t *testing.T) {
 	const issueID = "issue-cold-1"
 	task := Task{
@@ -1191,6 +1207,43 @@ func TestBuildPromptResumedNoDeltaDoesNotForceThreadRead(t *testing.T) {
 	}
 	if strings.Contains(out, "Read the triggering conversation first") {
 		t.Errorf("resumed/no-delta prompt must not use the cold-start forced-read wording, got:\n%s", out)
+	}
+}
+
+func TestBuildPromptColdStartWithNewCommentsUsesFullThread(t *testing.T) {
+	const issueID = "issue-cold-comments-1"
+	task := Task{
+		IssueID:               issueID,
+		TriggerCommentID:      "trigger-1",
+		TriggerThreadID:       "thread-root-1",
+		TriggerCommentContent: "please revisit this",
+		TriggerAuthorType:     "member",
+		NewCommentCount:       3,
+		NewCommentsSince:      "2026-08-03T06:00:00Z",
+	}
+	out := BuildPrompt(task, "claude")
+
+	if !strings.Contains(out, "3 new comment(s) on this issue") {
+		t.Fatalf("cold-start comment prompt must preserve the volume signal, got:\n%s", out)
+	}
+	if !strings.Contains(out, "multica issue comment list "+issueID+" --thread thread-root-1 --tail 30 --compact --output json") {
+		t.Fatalf("cold-start comment prompt must read the full triggering thread, got:\n%s", out)
+	}
+	if strings.Contains(out, "since your last run") || strings.Contains(out, "--since 2026-08-03T06:00:00Z") {
+		t.Fatalf("cold-start comment prompt must not use warm-session delta copy, got:\n%s", out)
+	}
+}
+
+func TestBuildChatPromptWebHistoryOnlyOnColdFollowUp(t *testing.T) {
+	base := Task{ChatSessionID: "sess-1", ChatMessage: "hello"}
+	if out := buildChatPrompt(base); strings.Contains(out, "multica chat history") {
+		t.Fatalf("opening web-chat turn should not request a transcript read, got:\n%s", out)
+	}
+	if out := buildChatPrompt(Task{ChatSessionID: "sess-1", ChatMessage: "follow up", PriorSessionID: "prior-session"}); strings.Contains(out, "multica chat history") {
+		t.Fatalf("resumed web-chat turn should not request a transcript read, got:\n%s", out)
+	}
+	if out := buildChatPrompt(Task{ChatSessionID: "sess-1", ChatMessage: "follow up", PriorWorkDir: "/tmp/prior-workdir"}); !strings.Contains(out, "multica chat history") {
+		t.Fatalf("cold web-chat follow-up should request a transcript read, got:\n%s", out)
 	}
 }
 

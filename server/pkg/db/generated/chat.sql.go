@@ -975,6 +975,25 @@ func (q *Queries) GetLastChatTaskSession(ctx context.Context, chatSessionID pgty
 	return i, err
 }
 
+const getLastChatTaskWorkDir = `-- name: GetLastChatTaskWorkDir :one
+SELECT work_dir FROM agent_task_queue
+WHERE chat_session_id = $1
+  AND status IN ('completed', 'failed', 'cancelled')
+  AND work_dir IS NOT NULL
+ORDER BY COALESCE(completed_at, started_at, dispatched_at, created_at) DESC, id DESC
+LIMIT 1
+`
+
+// Returns the newest terminal workdir for a chat session independently of
+// provider-session availability. A failed/cancelled task may retain files even
+// when its session pointer is absent or deliberately retired.
+func (q *Queries) GetLastChatTaskWorkDir(ctx context.Context, chatSessionID pgtype.UUID) (pgtype.Text, error) {
+	row := q.db.QueryRow(ctx, getLastChatTaskWorkDir, chatSessionID)
+	var workDir pgtype.Text
+	err := row.Scan(&workDir)
+	return workDir, err
+}
+
 const getLatestAssistantChatMessageForSession = `-- name: GetLatestAssistantChatMessageForSession :one
 SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, message_kind, channel_media_pending_until, channel_ingested, quick_actions FROM chat_message
 WHERE chat_session_id = $1 AND role = 'assistant' AND task_id IS NOT NULL

@@ -22,6 +22,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/daemonws"
+	"github.com/multica-ai/multica/server/internal/featureflags"
 	"github.com/multica-ai/multica/server/internal/integrations/slack"
 	"github.com/multica-ai/multica/server/internal/issuestatus"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
@@ -2450,33 +2451,38 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 				resp.PriorSessionResumeUnavailable = true
 			}
 		} else if !task.ForceFreshSession {
-			// Non-rerun follow-up on the same issue: resume the most recent
-			// (agent, issue) session so the agent keeps the issue's conversation
-			// context across turns. The "Focus on THIS comment" guard in
-			// prompt.go defends against inheriting the prior turn's "Done."
-			// marker, and GetLastTaskSession already excludes poisoned sessions.
-			if prior, err := h.Queries.GetLastTaskSession(r.Context(), db.GetLastTaskSessionParams{
+			// Non-rerun follow-ups cold-start the provider session by default, but
+			// retain the newest reusable workdir. The rollback flag restores the
+			// old session + matching workdir pair.
+			resumePriorSession := featureflags.AgentResumePriorSessionEnabled(r.Context(), h.FeatureFlags)
+			if resumePriorSession {
+				if prior, err := h.Queries.GetLastTaskSession(r.Context(), db.GetLastTaskSessionParams{
+					AgentID: task.AgentID,
+					IssueID: task.IssueID,
+				}); err == nil {
+					if prior.SessionID.Valid && prior.RuntimeID == task.RuntimeID {
+						resp.PriorSessionID = prior.SessionID.String
+					}
+					if prior.WorkDir.Valid {
+						resp.PriorWorkDir = prior.WorkDir.String
+					}
+				}
+			} else if workDir, err := h.Queries.GetLastTaskWorkDir(r.Context(), db.GetLastTaskWorkDirParams{
 				AgentID: task.AgentID,
 				IssueID: task.IssueID,
-			}); err == nil && prior.SessionID.Valid {
-				if prior.RuntimeID == task.RuntimeID {
-					resp.PriorSessionID = prior.SessionID.String
-				}
-				if prior.WorkDir.Valid {
-					resp.PriorWorkDir = prior.WorkDir.String
-				}
+			}); err == nil && workDir.Valid {
+				resp.PriorWorkDir = workDir.String
 			}
-			// MUL-5305: if the most recent terminal task withheld its Codex
-			// session because the rollout was missing, GetLastTaskSession fell
-			// back to an older session (or none). Disclose the continuity gap so
-			// the next run tells the user the most recent turn's context could not
-			// be carried over — even when that older session resumes cleanly,
-			// which the resume-presence gate would otherwise pass silently.
-			if missing, err := h.Queries.GetLatestTaskRolloutMissing(r.Context(), db.GetLatestTaskRolloutMissingParams{
-				AgentID: task.AgentID,
-				IssueID: task.IssueID,
-			}); err == nil && missing {
-				resp.PriorSessionResumeUnavailable = true
+			// MUL-5305 is relevant only when the server intends to resume a
+			// provider session. With cold starts it is expected that no session
+			// pointer is carried over, so the continuity notice would be noise.
+			if resumePriorSession {
+				if missing, err := h.Queries.GetLatestTaskRolloutMissing(r.Context(), db.GetLatestTaskRolloutMissingParams{
+					AgentID: task.AgentID,
+					IssueID: task.IssueID,
+				}); err == nil && missing {
+					resp.PriorSessionResumeUnavailable = true
+				}
 			}
 		}
 	}
@@ -2602,20 +2608,28 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 					resp.Repos = repos
 				}
 			}
+			// Chat follows the same continuity split as issue tasks: the rollback
+			// flag resumes a session/workdir pair, while the default cold start
+			// carries only the newest reusable workdir. Declared out here because the
+			// resume-history block after the input-load boundary reads it too.
+			resumePriorSession := featureflags.AgentResumePriorSessionEnabled(r.Context(), h.FeatureFlags)
 			if !task.ForceFreshSession {
-				// Resume chat sessions only when the stored pointer was produced
-				// by the same runtime as the claiming task. When the chat_session
-				// pointer is missing (legacy NULL runtime_id), stale (last task
-				// failed before reporting completion), or runtime-mismatched, fall
-				// back to the most recent task row that recorded a session_id —
-				// otherwise a single failed turn would silently drop the entire
-				// conversation memory on the next message. The fallback also
-				// requires runtime to match.
-				if cs.SessionID.Valid && cs.RuntimeID.Valid && cs.RuntimeID == task.RuntimeID {
-					resp.PriorSessionID = cs.SessionID.String
-				}
-				if cs.WorkDir.Valid {
-					resp.PriorWorkDir = cs.WorkDir.String
+				// Resume chat sessions only when the stored pointer was produced by the
+				// same runtime as the claiming task. When the chat_session pointer is
+				// missing (legacy NULL runtime_id), stale (last task failed before
+				// reporting completion), or runtime-mismatched, the fallback below
+				// recovers the conversation memory.
+				if resumePriorSession {
+					if cs.SessionID.Valid && cs.RuntimeID.Valid && cs.RuntimeID == task.RuntimeID {
+						resp.PriorSessionID = cs.SessionID.String
+					}
+					// The pointer pairs a session with the workdir it ran in, so it
+					// is only reusable together with that session. A cold start
+					// takes the newest workdir instead (below), which may be newer
+					// than this pointer when the last task did not complete.
+					if cs.WorkDir.Valid {
+						resp.PriorWorkDir = cs.WorkDir.String
+					}
 				}
 			}
 			// Resolve the user-message input batch for this run. A task-owned
@@ -2661,42 +2675,56 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			// reads belong after it: a task that cannot load its input is preserved
 			// for redelivery and must not spend two more queries before returning.
 			if !task.ForceFreshSession {
-				// GetLastChatTaskSession currently has exactly two consumers: the
-				// prior session and prior workdir fields. Keep this guard coupled to
-				// both so adding a third consumer cannot silently skip its fallback.
-				if chatSessionResumeFallbackNeeded(resp.PriorSessionID, resp.PriorWorkDir) {
-					h.Metrics.RecordChatClaimSessionFallbackNeeded()
-					started := time.Now()
-					prior, err := h.Queries.GetLastChatTaskSession(r.Context(), cs.ID)
-					h.Metrics.ObserveChatClaimLastSessionQuery(time.Since(started).Seconds())
-					switch {
-					case err == nil && prior.SessionID.Valid:
-						h.Metrics.RecordChatClaimSessionFallbackHit()
-						if resp.PriorSessionID == "" && prior.RuntimeID == task.RuntimeID {
-							resp.PriorSessionID = prior.SessionID.String
+				if resumePriorSession {
+					// GetLastChatTaskSession currently has exactly two consumers: the
+					// prior session and prior workdir fields. Keep this guard coupled to
+					// both so adding a third consumer cannot silently skip its fallback.
+					if chatSessionResumeFallbackNeeded(resp.PriorSessionID, resp.PriorWorkDir) {
+						h.Metrics.RecordChatClaimSessionFallbackNeeded()
+						started := time.Now()
+						prior, err := h.Queries.GetLastChatTaskSession(r.Context(), cs.ID)
+						h.Metrics.ObserveChatClaimLastSessionQuery(time.Since(started).Seconds())
+						switch {
+						case err == nil && prior.SessionID.Valid:
+							h.Metrics.RecordChatClaimSessionFallbackHit()
+							if resp.PriorSessionID == "" && prior.RuntimeID == task.RuntimeID {
+								resp.PriorSessionID = prior.SessionID.String
+							}
+							if prior.WorkDir.Valid && resp.PriorWorkDir == "" {
+								resp.PriorWorkDir = prior.WorkDir.String
+							}
+						case errors.Is(err, pgx.ErrNoRows):
+							h.Metrics.RecordChatClaimSessionFallbackMiss()
+						case err == nil:
+							// Defensive only: the SQL excludes NULL session ids, but
+							// preserve miss semantics if that contract ever changes.
+							h.Metrics.RecordChatClaimSessionFallbackMiss()
+						default:
+							h.Metrics.RecordChatClaimSessionFallbackError()
 						}
-						if prior.WorkDir.Valid && resp.PriorWorkDir == "" {
-							resp.PriorWorkDir = prior.WorkDir.String
-						}
-					case errors.Is(err, pgx.ErrNoRows):
-						h.Metrics.RecordChatClaimSessionFallbackMiss()
-					case err == nil:
-						// Defensive only: the SQL excludes NULL session ids, but
-						// preserve miss semantics if that contract ever changes.
-						h.Metrics.RecordChatClaimSessionFallbackMiss()
-					default:
-						h.Metrics.RecordChatClaimSessionFallbackError()
 					}
-				}
 
-				// MUL-5305: continuity-gap disclosure is independent of whether
-				// either pointer field needed fallback, so this query stays
-				// unconditional for non-force-fresh chat claims.
-				started := time.Now()
-				missing, err := h.Queries.GetLatestChatTaskRolloutMissing(r.Context(), cs.ID)
-				h.Metrics.ObserveChatClaimRolloutMissingQuery(time.Since(started).Seconds())
-				if err == nil && missing {
-					resp.PriorSessionResumeUnavailable = true
+					// MUL-5305: continuity-gap disclosure is independent of whether
+					// either pointer field needed fallback, so this query stays
+					// unconditional for non-force-fresh chat claims.
+					started := time.Now()
+					missing, err := h.Queries.GetLatestChatTaskRolloutMissing(r.Context(), cs.ID)
+					h.Metrics.ObserveChatClaimRolloutMissingQuery(time.Since(started).Seconds())
+					if err == nil && missing {
+						resp.PriorSessionResumeUnavailable = true
+					}
+				} else {
+					// Cold start carries the newest reusable workdir and no provider
+					// session, so neither the session fallback nor the rollout-missing
+					// disclosure applies: no provider context was promised.
+					// The newest terminal task wins over the chat_session pointer,
+					// which only advances on a completed task and can therefore be
+					// older. With no terminal task yet, the pointer is all there is.
+					if workDir, err := h.Queries.GetLastChatTaskWorkDir(r.Context(), cs.ID); err == nil && workDir.Valid {
+						resp.PriorWorkDir = workDir.String
+					} else if cs.WorkDir.Valid {
+						resp.PriorWorkDir = cs.WorkDir.String
+					}
 				}
 			}
 

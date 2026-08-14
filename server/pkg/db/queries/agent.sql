@@ -1074,6 +1074,18 @@ WHERE session_id NOT IN (SELECT session_id FROM retired_sessions)
 ORDER BY terminal_at DESC
 LIMIT 1;
 
+-- name: GetLastTaskWorkDir :one
+-- Returns the newest terminal workdir for an (agent_id, issue_id) pair.
+-- Workdir continuity is independent from provider-session continuity: a task
+-- can preserve files while deliberately withholding or abandoning its session.
+SELECT work_dir FROM agent_task_queue
+WHERE agent_id = $1
+  AND issue_id = $2
+  AND status IN ('completed', 'failed', 'cancelled')
+  AND work_dir IS NOT NULL
+ORDER BY COALESCE(completed_at, started_at, dispatched_at, created_at) DESC, id DESC
+LIMIT 1;
+
 -- name: GetLatestTaskRolloutMissing :one
 -- Reports whether the most recent terminal task for (agent_id, issue_id)
 -- withheld its Codex session because the rollout was missing (MUL-5305). When
