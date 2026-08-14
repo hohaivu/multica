@@ -396,6 +396,49 @@ func TestPiExecuteSucceedsWhenRetryFollowsTurnError(t *testing.T) {
 	}
 }
 
+// Pi can emit a terminal assistant message with stopReason=error and still
+// exit zero. That is a provider failure, not the valid tool-only empty success
+// that this backend otherwise supports.
+func TestPiExecuteFailsOnTerminalAssistantError(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fixture is POSIX-only")
+	}
+
+	const providerError = "400: invalid_request_error: No tool call found for function call output with call_id call_123"
+	events := []string{
+		`{"type":"agent_start"}`,
+		`{"type":"turn_start"}`,
+		`{"type":"tool_execution_start","toolCallId":"call_123","toolName":"bash","args":{"command":"true"}}`,
+		`{"type":"tool_execution_end","toolCallId":"call_123","toolName":"bash","result":"","isError":false}`,
+		`{"type":"message_end","message":{"role":"assistant","stopReason":"error","errorMessage":"400: invalid_request_error: No tool call found for function call output with call_id call_123"}}`,
+	}
+	fakePath := filepath.Join(t.TempDir(), "pi")
+	writeTestExecutable(t, fakePath, []byte(piEventStreamScript(events)))
+
+	backend, err := New("pi", Config{ExecutablePath: fakePath, Logger: slog.Default()})
+	if err != nil {
+		t.Fatalf("new pi backend: %v", err)
+	}
+	session, err := backend.Execute(t.Context(), "test prompt", ExecOptions{Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	go func() {
+		for range session.Messages {
+		}
+	}()
+
+	select {
+	case result := <-session.Result:
+		if result.Status != "failed" || result.Output != "" || result.Error != providerError {
+			t.Fatalf("result = %+v, want failed empty result with provider error", result)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for result")
+	}
+}
+
 func TestStripPiToolCallMarkup(t *testing.T) {
 	tests := map[string]string{
 		`before call:bash{command:<|"|>cd repo/path && ls -F<|"|>}<tool_call|> after`:                           "before  after",

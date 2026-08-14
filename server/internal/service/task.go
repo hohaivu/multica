@@ -4630,12 +4630,10 @@ func (s *TaskService) MaybeRetryFailedTask(ctx context.Context, parent db.AgentT
 // fixed — should not throw away the work already done. Only the agent SESSION
 // is conditionally resumed, and that decision is made later by the daemon claim
 // handler from the SOURCE task (via rerun_of_task_id), NOT baked into this row.
-// enqueueRerunTask pins force_fresh_session=true so an old claim handler during
-// a rolling deploy degrades to a clean start rather than resuming a different
-// execution; the new claim handler ignores the flag for reruns and resumes the
-// session only when the source failure did not poison the conversation (see
-// service.ResumeUnsafeFailure) and the source ran on the same runtime. When the
-// dir is objectively unreusable (GC'd, absent on the claiming runtime, or never
+// enqueueRerunTask pins force_fresh_session=true: the new claim handler keeps
+// the source workdir but deliberately omits its session, because a manual rerun
+// is an explicit request not to replay the prior conversation. When the dir is
+// objectively unreusable (GC'd, absent on the claiming runtime, or never
 // recorded) the daemon falls back to a fresh workdir. Auto-retry of an orphaned
 // mid-flight failure (HandleFailedTasks → MaybeRetryFailedTask →
 // CreateRetryTask) takes its own path, so MUL-1128's mid-flight resume contract
@@ -4832,14 +4830,9 @@ func (s *TaskService) promoteNewestSurvivingComment(ctx context.Context, ids []p
 // stays in sync; otherwise (squad member, prior assignee that has since been
 // reassigned, mention agent) we use the mention path.
 //
-// force_fresh_session is pinned to true on every rerun row on purpose. It is
-// the rollback-safe legacy signal: an OLD claim handler (mid rolling deploy)
-// gates the whole resume lookup on !force_fresh_session, so it starts clean
-// instead of resuming via the (agent, issue) most-recent query — which could
-// pick a different execution than the one the user clicked. The NEW claim
-// handler ignores this flag for reruns and instead reads the exact source task
-// (rerun_of_task_id) to reuse its workdir and, when the failure did not poison
-// the conversation, resume its session (MUL-4869).
+// force_fresh_session is pinned to true on every rerun row. It makes both old
+// and new claim handlers start a fresh provider session; the new handler still
+// reads the exact source task to reuse its workdir (MUL-4869).
 func (s *TaskService) enqueueRerunTask(ctx context.Context, issue db.Issue, agentID pgtype.UUID, triggerCommentID pgtype.UUID, coalescedCommentIDs []pgtype.UUID, isLeader bool, squadID pgtype.UUID, actorUserID pgtype.UUID, rerunOfTaskID pgtype.UUID) (db.AgentTaskQueue, error) {
 	if issue.AssigneeType.String == "agent" && issue.AssigneeID.Valid &&
 		util.UUIDToString(issue.AssigneeID) == util.UUIDToString(agentID) {

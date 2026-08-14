@@ -359,12 +359,12 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 					Output: decodePiResult(evt.Result),
 				})
 
-			case "turn_end":
+			case "message_end", "turn_end":
 				msg := decodePiMessage(evt.Message)
 				if msg == nil {
 					continue
 				}
-				if msg.Usage != nil {
+				if evt.Type == "turn_end" && msg.Usage != nil {
 					model := msg.Model
 					if model == "" {
 						model = opts.Model
@@ -443,9 +443,13 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 
 		b.cfg.Logger.Info(label+" finished", "pid", cmd.Process.Pid, "status", finalStatus, "duration", duration.Round(time.Millisecond).String())
 
+		resultOutput := output.String()
+		if finalStatus != "completed" {
+			resultOutput = ""
+		}
 		resCh <- Result{
 			Status:     finalStatus,
-			Output:     output.String(),
+			Output:     resultOutput,
 			Error:      finalError,
 			DurationMs: duration.Milliseconds(),
 			SessionID:  sessionPath,
@@ -475,7 +479,7 @@ type piStreamEvent struct {
 	Result     json.RawMessage `json:"result,omitempty"`
 	IsError    bool            `json:"isError,omitempty"`
 
-	// error: Message is a string. turn_end: Message is an object.
+	// error: Message is a string. message_end / turn_end: Message is an object.
 	Message json.RawMessage `json:"message,omitempty"`
 
 	// auto_retry_end
@@ -493,9 +497,10 @@ type piMessage struct {
 	Model string   `json:"model,omitempty"`
 	Usage *piUsage `json:"usage,omitempty"`
 
-	// turn_end carries the terminal state of the turn. Pi sets StopReason to
-	// "error" for a provider call it could not complete, whether or not it
-	// goes on to retry, and puts the provider's message in ErrorMessage.
+	// turn_end and message_end carry the terminal state of the turn. Pi sets
+	// StopReason to "error" for a provider call it could not complete, whether
+	// or not it goes on to retry, and puts the provider's message in
+	// ErrorMessage.
 	StopReason   string `json:"stopReason,omitempty"`
 	ErrorMessage string `json:"errorMessage,omitempty"`
 }

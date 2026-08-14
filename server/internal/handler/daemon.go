@@ -2403,17 +2403,17 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 
 		// Resolve the prior agent session / workdir to resume.
 		if task.RerunOfTaskID.Valid {
-			// Manual retry: resume precisely from the source task the user
-			// clicked, NOT the most-recent (agent, issue) row — a parallel task
-			// on the same issue must never hijack the resume (MUL-4869). The
-			// workdir is ALWAYS reused when it still exists; the session is
-			// resumed only when the source failure did not poison the
-			// conversation AND the source ran on this runtime.
+			// Manual retry reads precisely the source task the user clicked, NOT
+			// the most-recent (agent, issue) row — a parallel task on the same
+			// issue must never hijack its workdir (MUL-4869). The workdir is
+			// ALWAYS reused when it still exists; the session follows the explicit
+			// fresh-session control below.
 			//
-			// Resume-safety is computed HERE from the source task, not read off
-			// task.ForceFreshSession: RerunIssue pins that flag to true so an OLD
-			// claim handler mid rolling-deploy degrades to a clean start instead
-			// of resuming a different execution via the (agent, issue) lookup.
+			// force_fresh_session is the explicit manual-rerun control: keep the
+			// source workdir, but never replay its provider conversation. That
+			// matters when a user judged a prior turn bad or requests a fresh
+			// session — its transcript may be exactly what caused the failure.
+			// Older rows without the flag retain the exact-source resume path.
 			// service.ResumeUnsafeFailure mirrors GetLastTaskSession, including
 			// its 400/invalid_request_error text defense for legacy /
 			// mis-classified rows that the exact-source path would otherwise miss.
@@ -2429,7 +2429,8 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 				if src.WorkDir.Valid {
 					resp.PriorWorkDir = src.WorkDir.String
 				}
-				if !service.ResumeUnsafeFailure(src.FailureReason.String, src.Error.String) &&
+				if !task.ForceFreshSession &&
+					!service.ResumeUnsafeFailure(src.FailureReason.String, src.Error.String) &&
 					src.SessionID.Valid && src.RuntimeID == task.RuntimeID {
 					resp.PriorSessionID = src.SessionID.String
 				}
