@@ -6498,6 +6498,10 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if err != nil {
 		d.logger.Warn("execenv: inject runtime config failed (non-fatal)", "error", err)
 	}
+	// PriorWorkDir is only an offer — reuseExecutionEnvironment can decline and
+	// fall back to a fresh Prepare. BuildPrompt needs to know which actually
+	// happened to warn a cold-started run when it inherits a dirty directory.
+	task.WorkDirReused = envReused
 	prompt := BuildPrompt(task, provider)
 
 	// Pass task-scoped auth credentials and context so the spawned agent CLI

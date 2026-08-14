@@ -14,16 +14,21 @@ func newChatReadRenderTestCmd(t *testing.T) *cobra.Command {
 	return cmd
 }
 
-func TestRenderChatReadSlackOverviewKeepsThreadColumnsWithoutThreads(t *testing.T) {
+func TestRenderChatReadSlackFallbackToTranscriptOmitsThreadColumns(t *testing.T) {
+	// A Slack-bound session still falls back to the plain chat_message
+	// transcript (channel_type stays "slack") whenever the live Slack read is
+	// unavailable (h.SlackHistory == nil or slack.ErrNoSlackSession). Those
+	// rows carry no thread metadata, so the layout must follow the rows, not
+	// the channel type — otherwise THREAD_ID/REPLIES print empty.
 	cmd := newChatReadRenderTestCmd(t)
 	resp := map[string]any{
 		"channel_type": "slack",
 		"messages": []any{
 			map[string]any{
-				"ts":     "1700000000.000100",
+				"ts":     "2026-08-14T07:00:00Z",
 				"role":   "user",
-				"author": "Alice",
-				"text":   "No replies on this page",
+				"author": "User",
+				"text":   "Transcript fallback message",
 			},
 		},
 	}
@@ -32,9 +37,9 @@ func TestRenderChatReadSlackOverviewKeepsThreadColumnsWithoutThreads(t *testing.
 	if err != nil {
 		t.Fatalf("renderChatRead: %v", err)
 	}
-	for _, want := range []string{"THREAD_ID", "REPLIES"} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("Slack overview missing %q when page has no threaded rows:\n%s", want, out)
+	for _, unwanted := range []string{"THREAD_ID", "REPLIES"} {
+		if strings.Contains(out, unwanted) {
+			t.Fatalf("Slack transcript fallback unexpectedly contains %q:\n%s", unwanted, out)
 		}
 	}
 }
@@ -66,9 +71,12 @@ func TestRenderChatReadSlackWithThreadMetadataKeepsThreadColumns(t *testing.T) {
 	}
 }
 
-func TestRenderChatReadCompatibilityFallbackUsesThreadColumns(t *testing.T) {
+func TestRenderChatReadNonSlackWithThreadMetadataKeepsThreadColumns(t *testing.T) {
+	// The layout follows the rows, not channel_type: any channel overview that
+	// carries thread metadata gets the thread columns, not just Slack.
 	cmd := newChatReadRenderTestCmd(t)
 	resp := map[string]any{
+		"channel_type": "wecom",
 		"messages": []any{
 			map[string]any{
 				"ts":          "1700000000.000100",
@@ -76,7 +84,7 @@ func TestRenderChatReadCompatibilityFallbackUsesThreadColumns(t *testing.T) {
 				"author":      "Alice",
 				"thread_id":   "1700000000.000100",
 				"reply_count": float64(1),
-				"text":        "Legacy Slack response",
+				"text":        "Threaded response",
 			},
 		},
 	}
@@ -86,7 +94,7 @@ func TestRenderChatReadCompatibilityFallbackUsesThreadColumns(t *testing.T) {
 		t.Fatalf("renderChatRead: %v", err)
 	}
 	if !strings.Contains(out, "THREAD_ID") || !strings.Contains(out, "REPLIES") {
-		t.Fatalf("compatibility fallback omitted thread columns:\n%s", out)
+		t.Fatalf("non-Slack overview with thread metadata omitted thread columns:\n%s", out)
 	}
 }
 

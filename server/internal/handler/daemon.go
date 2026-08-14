@@ -2417,8 +2417,10 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 							resp.PriorWorkDir = prior.WorkDir.String
 						}
 					}
-				} else if workDir, err := h.Queries.GetLastChatTaskWorkDir(r.Context(), cs.ID); err == nil && workDir.Valid {
-					resp.PriorWorkDir = workDir.String
+				} else if resp.PriorWorkDir == "" {
+					if workDir, err := h.Queries.GetLastChatTaskWorkDir(r.Context(), cs.ID); err == nil && workDir.Valid {
+						resp.PriorWorkDir = workDir.String
+					}
 				}
 				// A rollout-missing disclosure only describes a deliberately
 				// resumed provider session. It is suppressed when cold start is the

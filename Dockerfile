@@ -13,7 +13,7 @@ RUN cd server && go mod download
 COPY server/ ./server/
 
 # Build binaries
-ARG VERSION=dev
+ARG VERSION=v0.4.30-dev
 ARG COMMIT=unknown
 ARG DATE=unknown
 RUN cd server && CGO_ENABLED=0 go build -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" -o bin/server ./cmd/server

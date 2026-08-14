@@ -117,8 +117,10 @@ func fetchChatRead(cmd *cobra.Command, basePath, threadID string) (map[string]an
 }
 
 // renderChatRead prints the response as JSON (default) or a table. The overview
-// layout follows the response's channel type, not whichever rows happen to be
-// present on the current page.
+// layout follows whichever rows are actually on the page, not the channel
+// type: a Slack-bound session still falls back to the plain chat_message
+// transcript (no thread_id/reply_count) whenever the live Slack read is
+// unavailable, and channel_type keeps naming the bound platform in that case.
 func renderChatRead(cmd *cobra.Command, resp map[string]any, overview bool) error {
 	output, _ := cmd.Flags().GetString("output")
 	if output != "table" {
@@ -129,8 +131,7 @@ func renderChatRead(cmd *cobra.Command, resp map[string]any, overview bool) erro
 		return nil
 	}
 	msgs, _ := resp["messages"].([]any)
-	channelType, hasChannelType := resp["channel_type"].(string)
-	showThreadColumns := overview && (channelType == "slack" || (!hasChannelType && hasThreadMetadata(msgs)))
+	showThreadColumns := overview && hasThreadMetadata(msgs)
 	var headers []string
 	if showThreadColumns {
 		headers = []string{"TS", "ROLE", "AUTHOR", "THREAD_ID", "REPLIES", "TEXT"}

@@ -122,6 +122,7 @@ func buildPromptBody(task Task, provider string) string {
 	b.WriteString("You are running as a local coding agent for a Multica workspace.\n\n")
 	fmt.Fprintf(&b, "Your assigned issue ID is: %s\n\n", task.IssueID)
 	b.WriteString(turnModeOwnership)
+	b.WriteString(coldDirtyWorkdirWarning(task))
 	// Assignment handoff (MUL-3375): a free-text instruction the person who
 	// assigned/promoted this issue left for you. Frame it as a handoff, not a
 	// comment to reply to — there is no comment thread to answer here.
@@ -255,6 +256,7 @@ func buildCommentPrompt(task Task, provider string) string {
 	// doesn't send one) would otherwise leave the turn unlabelled, and the
 	// agent would fall through to Ownership mode and change the issue status.
 	b.WriteString(turnModeReply)
+	b.WriteString(coldDirtyWorkdirWarning(task))
 	if task.TriggerCommentContent != "" {
 		authorLabel := "A user"
 		if task.TriggerAuthorType == "agent" {
@@ -367,6 +369,22 @@ func buildCommentPrompt(task Task, provider string) string {
 		b.WriteString(execenv.BuildCommentReplyInstructions(provider, task.IssueID, task.TriggerCommentID, taskIsSquadLeader(task)))
 	}
 	return b.String()
+}
+
+// coldDirtyWorkdirWarning warns a cold-started run that it inherited a prior
+// run's workdir with no memory of what is in it. PriorSessionID == "" means
+// the agent has no session to recall the checkout, branch, or any
+// uncommitted/leftover files a previous turn left behind; WorkDirReused means
+// the daemon actually gave it that directory rather than a fresh one (the
+// offered PriorWorkDir can be declined and fall back to a fresh Prepare).
+// Returns "" otherwise, including on the session's/issue's first turn.
+func coldDirtyWorkdirWarning(task Task) string {
+	if task.PriorSessionID != "" || !task.WorkDirReused {
+		return ""
+	}
+	return "This workdir already holds work from an earlier run on this issue that you do not remember. " +
+		"Check `git status` and the current branch before checking out again or creating a new branch, " +
+		"and clean up any stray reply files (e.g. ./reply.md) left over from a previous turn.\n\n"
 }
 
 // commentReplyThreads groups this run's trigger + coalesced comments by their
@@ -505,11 +523,13 @@ func buildChatPrompt(task Task) string {
 		// Scoped to process, not results — a completion confirmation IS the deliverable.
 		fmt.Fprintf(&b, "Reply to %s with the final outcome only. Do NOT narrate planned or in-progress steps (\"我先读取…\"); completed actions are part of the outcome.\n", platform)
 		b.WriteString("\n")
-	} else if task.PriorSessionID == "" && task.PriorWorkDir != "" {
+	} else if task.PriorSessionID == "" {
 		// A cold-started follow-up may have only the current message in the
-		// provider prompt. A non-empty prior workdir is the claim's signal that
-		// this is a follow-up rather than the session's opening turn; avoid an
-		// unnecessary history round trip for a brand-new chat.
+		// provider prompt. Point at `multica chat history` unconditionally
+		// (rather than gating on PriorWorkDir): a cancelled or early-failed
+		// prior turn leaves no workdir pointer at all, which is exactly the
+		// case where the agent most needs to know a transcript is readable.
+		// Worst case on a brand-new session's opening turn is one empty read.
 		b.WriteString("The message below may be only what triggered you — read earlier context with `multica chat history`.\n")
 	}
 	if task.Agent != nil && len(task.Agent.Skills) > 0 {

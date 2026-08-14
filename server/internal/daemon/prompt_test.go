@@ -1183,12 +1183,23 @@ func TestBuildPromptColdStartWithNewCommentsUsesFullThread(t *testing.T) {
 	if strings.Contains(out, "since your last run") || strings.Contains(out, "--since 2026-08-03T06:00:00Z") {
 		t.Fatalf("cold-start comment prompt must not use warm-session delta copy, got:\n%s", out)
 	}
+	// The issue-wide count is announced ISSUE-WIDE, but a cold run can only
+	// read the triggering thread directly — the other new comments must stay
+	// reachable via the cross-thread roots scan, or the count is a promise the
+	// prompt cannot keep.
+	if !strings.Contains(out, "Rerun with `--roots-only --summary` replacing `--thread ... --tail 30`") {
+		t.Fatalf("cold-start comment prompt with new comments must still offer the cross-thread roots scan, got:\n%s", out)
+	}
 }
 
-func TestBuildChatPromptWebHistoryOnlyOnColdFollowUp(t *testing.T) {
-	base := Task{ChatSessionID: "sess-1", ChatMessage: "hello"}
-	if out := buildChatPrompt(base); strings.Contains(out, "multica chat history") {
-		t.Fatalf("opening web-chat turn should not request a transcript read, got:\n%s", out)
+func TestBuildChatPromptWebHistoryOnColdStart(t *testing.T) {
+	// The transcript pointer is keyed on PriorSessionID alone, not PriorWorkDir:
+	// a cancelled or early-failed prior turn leaves no workdir pointer at all,
+	// which is exactly the case where the agent most needs to know a
+	// transcript is readable. The cost is one wasted read on a session's actual
+	// opening turn, which also has no PriorSessionID.
+	if out := buildChatPrompt(Task{ChatSessionID: "sess-1", ChatMessage: "hello"}); !strings.Contains(out, "multica chat history") {
+		t.Fatalf("cold web-chat turn (opening or a follow-up with no recorded workdir) should request a transcript read, got:\n%s", out)
 	}
 	if out := buildChatPrompt(Task{ChatSessionID: "sess-1", ChatMessage: "follow up", PriorSessionID: "prior-session"}); strings.Contains(out, "multica chat history") {
 		t.Fatalf("resumed web-chat turn should not request a transcript read, got:\n%s", out)
