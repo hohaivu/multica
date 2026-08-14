@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { renderWithI18n } from "../../test/i18n";
 import { IssueMentionCard } from "./issue-mention-card";
@@ -150,5 +151,20 @@ describe("IssueMentionCard", () => {
     renderCard(makeAdapter(), { id: "issue-2", identifier: "MUL-7" });
 
     expect(screen.getByTestId("issue-chip")).toHaveAttribute("data-current", "false");
+  });
+
+  it("keeps the current-issue label as an accessible, keyboard-activatable link", async () => {
+    const push = vi.fn();
+    const user = userEvent.setup();
+    renderCard(makeAdapter({ push }), { id: "issue-1", identifier: "MUL-7" });
+
+    const link = screen.getByRole("link", { name: "This issue · MUL-7" });
+    expect(link).toHaveAttribute("href", "/acme/issues/issue-1");
+
+    await user.tab();
+    expect(link).toHaveFocus();
+
+    await user.keyboard("{Enter}");
+    expect(push).toHaveBeenCalledWith("/acme/issues/issue-1");
   });
 });

@@ -1,10 +1,20 @@
 -- name: ListInboxItems :many
+-- Active inbox for the recipient. LIMIT bounds the response the same way
+-- ListArchivedInboxItems does: v1 ships no pagination, and without a cap a
+-- heavy inbox produces multi-MB payloads on every mark-read refetch (#6527).
+-- Rows are newest-first, so truncation drops the OLDEST rows. For a group
+-- represented in the retained window, this cannot hide its newest row — the
+-- one the deduplicated UI renders. In-workspace unread badges are derived
+-- client-side from this capped list and can under-report beyond the limit;
+-- CountUnreadInbox and CountUnreadInboxByWorkspace remain separate server
+-- queries (the former's /api/inbox/unread-count endpoint is currently unused).
 SELECT i.*,
        iss.status as issue_status
 FROM inbox_item i
 LEFT JOIN issue iss ON iss.id = i.issue_id
 WHERE i.workspace_id = $1 AND i.recipient_type = $2 AND i.recipient_id = $3 AND i.archived = false
-ORDER BY i.created_at DESC;
+ORDER BY i.created_at DESC
+LIMIT 200;
 
 -- name: ListArchivedInboxItems :many
 -- Archived counterpart of ListInboxItems, backing the inbox's "Archived"
