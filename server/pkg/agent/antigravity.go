@@ -521,6 +521,11 @@ func tailAntigravityTranscript(ctx context.Context, transcriptPath string, msgCh
 func tailAntigravityTranscriptOnce(ctx context.Context, path string, msgCh chan<- Message, _ *slog.Logger, offset *int64, initialized *bool, callID *uint64, pending *[]string) error {
 	info, err := os.Stat(path)
 	if err != nil {
+		if !*initialized && os.IsNotExist(err) {
+			*initialized = true
+			*offset = 0
+			return nil
+		}
 		return err
 	}
 	if !*initialized {
@@ -559,7 +564,7 @@ func tailAntigravityTranscriptOnce(ctx context.Context, path string, msgCh chan<
 		if json.Unmarshal(line, &rec) != nil {
 			continue
 		}
-		if rec.Type == "PLANNER_RESPONSE" && len(rec.ToolCalls) > 0 {
+		if rec.Type == "PLANNER_RESPONSE" && rec.Source == "MODEL" && rec.Status == "DONE" && len(rec.ToolCalls) > 0 {
 			for _, call := range rec.ToolCalls {
 				*callID++
 				id := fmt.Sprintf("antigravity-tool-%d", *callID)
@@ -569,7 +574,11 @@ func tailAntigravityTranscriptOnce(ctx context.Context, path string, msgCh chan<
 		} else if rec.Source == "MODEL" && rec.Type != "PLANNER_RESPONSE" && len(*pending) > 0 {
 			id := (*pending)[0]
 			*pending = (*pending)[1:]
-			trySend(msgCh, Message{Type: MessageToolResult, CallID: id, Output: string(rec.Content)})
+			var output string
+			if err := json.Unmarshal(rec.Content, &output); err != nil {
+				output = string(rec.Content)
+			}
+			trySend(msgCh, Message{Type: MessageToolResult, CallID: id, Output: output})
 		}
 	}
 	return nil
