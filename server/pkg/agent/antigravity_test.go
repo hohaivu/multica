@@ -601,6 +601,59 @@ sleep 60
 `
 }
 
+func fakeAgyPlainTextNewlineScript() string {
+	return `#!/bin/sh
+[ "$1" = "models" ] && exit 0
+printf '%s\n' '### Heading'
+printf '%s\n' ''
+printf '%s\n' '- item one'
+printf '%s\n' '- item two'
+`
+}
+
+func TestAntigravityBackendStreamPreservesNewlines(t *testing.T) {
+	t.Parallel()
+
+	fakePath := filepath.Join(t.TempDir(), "agy")
+	writeTestExecutable(t, fakePath, []byte(fakeAgyPlainTextNewlineScript()))
+	backend, err := New("antigravity", Config{ExecutablePath: fakePath, Logger: quietAntigravityLogger()})
+	if err != nil {
+		t.Fatalf("new antigravity backend: %v", err)
+	}
+
+	session, err := backend.Execute(context.Background(), "prompt-ignored", ExecOptions{})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+
+	result := <-session.Result
+	const want = "### Heading\n\n- item one\n- item two"
+	if result.Output != want {
+		t.Fatalf("result output = %q, want %q", result.Output, want)
+	}
+
+	var got strings.Builder
+	for {
+		select {
+		case msg, ok := <-session.Messages:
+			if !ok {
+				if got.String() != want {
+					t.Fatalf("concatenated message text = %q, want %q", got.String(), want)
+				}
+				return
+			}
+			if msg.Type == MessageText {
+				got.WriteString(msg.Content)
+			}
+		default:
+			if got.String() != want {
+				t.Fatalf("concatenated message text = %q, want %q", got.String(), want)
+			}
+			return
+		}
+	}
+}
+
 // TestAntigravityBackendPrintTimeoutSurfacesAsTimeout is the end-to-end guard for
 // MUL-3570: agy aborts a long turn by printing its timeout sentinel and exiting
 // 0, so the backend must classify the result as a timeout (not a truncated

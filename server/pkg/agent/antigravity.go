@@ -171,12 +171,14 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 				// Keep plain-text fallback handling for terminal CLI diagnostics
 				// and older fixture output. With stream-json enabled, normal model
 				// text arrives through step_update.text_delta below.
+				chunk := line
 				if output.Len() > 0 {
 					output.WriteByte('\n')
+					chunk = "\n" + chunk
 				}
 				output.WriteString(line)
-				if strings.TrimSpace(line) != "" {
-					trySend(msgCh, Message{Type: MessageText, Content: line})
+				if chunk != "" {
+					trySend(msgCh, Message{Type: MessageText, Content: chunk})
 				}
 				continue
 			}
