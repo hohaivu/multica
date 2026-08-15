@@ -14,7 +14,7 @@
 // Go compile error is fatal — you want that to block dev, not hide.
 
 import { access, chmod, copyFile, mkdir, rm } from "node:fs/promises";
-import { constants } from "node:fs";
+import { constants, readFileSync } from "node:fs";
 import { execFileSync, execSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,6 +22,22 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..", "..", "..");
 const serverDir = join(repoRoot, "server");
+
+// The Makefile's DEV_CLI_VERSION is the guarded source of truth for a tagless
+// checkout's fallback version (server/pkg/agent/dev_version_floor_test.go
+// fails the build if it ever drops below a Min*CLIVersion floor). Reading it
+// here — instead of duplicating the literal — keeps this bundler in lockstep
+// with `make build` automatically.
+export function devCliVersionFromMakefile(makefilePath) {
+  const src = readFileSync(makefilePath, "utf-8");
+  const m = /DEV_CLI_VERSION\s*:=\s*(\S+)/.exec(src);
+  if (!m) {
+    throw new Error(
+      `[bundle-cli] DEV_CLI_VERSION not found in ${makefilePath}`,
+    );
+  }
+  return m[1];
+}
 
 const PLATFORM_TO_GOOS = {
   darwin: "darwin",
@@ -106,9 +122,13 @@ async function exists(p) {
 }
 
 if (hasGo()) {
+  // No --always: a tagless checkout must fall through to DEV_CLI_VERSION, not
+  // a bare commit hash — `ebea55ae5-dirty` fails every Min*CLIVersion semver
+  // gate (packages/core/runtimes/cli-version.ts), so the desktop app's chat
+  // composer thinks its own bundled daemon needs an upgrade.
   const version =
-    git("describe", "--tags", "--match", "v[0-9]*", "--always", "--dirty") ||
-    "dev";
+    git("describe", "--tags", "--match", "v[0-9]*", "--dirty") ||
+    devCliVersionFromMakefile(join(repoRoot, "Makefile"));
   const commit = git("rev-parse", "--short", "HEAD") || "unknown";
   const date = new Date().toISOString().replace(/\.\d+Z$/, "Z");
   const ldflags = `-X main.version=${version} -X main.commit=${commit} -X main.date=${date}`;

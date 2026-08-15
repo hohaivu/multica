@@ -1836,6 +1836,17 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 					// id here — the resulting chain would then attribute the
 					// out-of-band comment to an unrelated task's originator.
 					sourceTaskID = taskUUID
+				} else if err == nil && !task.IssueID.Valid {
+					// A chat / non-issue-bound task belongs to no issue, so there
+					// is no cross-issue authority to borrow (MUL-4857) — the
+					// reply-parent-drift and squad-leader no_action checks above
+					// are issue-scoped guards and do not apply here. Stamping its
+					// lineage keeps the human originator of a chat-driven comment
+					// alive for the next hop's invoke gate; without it the woken
+					// agent runs unattributed and cannot mention any private
+					// agent (surfaced as VUH-96: a chat-driven pm mention left
+					// tech-lead's own mentions blocked/invocation_not_allowed).
+					sourceTaskID = taskUUID
 				}
 			}
 		}
