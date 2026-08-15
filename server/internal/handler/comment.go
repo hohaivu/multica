@@ -1450,11 +1450,12 @@ func keepRootConnected(byID map[string]db.Comment) []db.Comment {
 }
 
 type CreateCommentRequest struct {
-	Content          string   `json:"content"`
-	Type             string   `json:"type"`
-	ParentID         *string  `json:"parent_id"`
-	AttachmentIDs    []string `json:"attachment_ids"`
-	SuppressAgentIDs []string `json:"suppress_agent_ids"`
+	Content          string          `json:"content"`
+	Type             string          `json:"type"`
+	ParentID         *string         `json:"parent_id"`
+	AttachmentIDs    []string        `json:"attachment_ids"`
+	SuppressAgentIDs []string        `json:"suppress_agent_ids"`
+	Metadata         json.RawMessage `json:"metadata"`
 }
 
 type CommentTriggerPreviewRequest struct {
@@ -1735,6 +1736,22 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	if req.Type == "" {
 		req.Type = "comment"
 	}
+	if len(req.Metadata) == 0 {
+		req.Metadata = json.RawMessage(`{}`)
+	}
+	var metadata map[string]json.RawMessage
+	if err := json.Unmarshal(req.Metadata, &metadata); err != nil || metadata == nil || len(req.Metadata) > 8192 {
+		writeError(w, http.StatusBadRequest, "metadata must be a JSON object no larger than 8192 bytes")
+		return
+	}
+	if _, ok := metadata["ask_user_question"]; ok {
+		authorType, _ := h.resolveActor(r, userID, uuidToString(issue.WorkspaceID))
+		if authorType != "agent" {
+			writeError(w, http.StatusForbidden, "structured questions require an agent author")
+			return
+		}
+	}
+	authorType, authorID := h.resolveActor(r, userID, uuidToString(issue.WorkspaceID))
 	// Validate rather than letting the DB CHECK reject it: an unknown type
 	// previously surfaced as a 500 on a constraint violation, which reads as a
 	// server fault for what is plainly bad input. This is also the explicit
@@ -1773,7 +1790,6 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Determine author identity: agent (via X-Agent-ID header) or member.
-	authorType, authorID := h.resolveActor(r, userID, uuidToString(issue.WorkspaceID))
 
 	// Defense against resumed-session drift: when an agent posts from inside a
 	// comment-triggered task AND the comment is being posted on that same
