@@ -402,6 +402,25 @@ printf '%s\n' '{"event":"result","result":{"conversation_id":"b4083a09-b108-4540
 `
 }
 
+func fakeAgyModelResolutionScript() string {
+	return `#!/bin/sh
+if [ "$1" = "models" ]; then
+  printf '%s\n' 'gemini-3.1-pro	Gemini 3.1 Pro'
+  exit 0
+fi
+model=""
+args=""
+while [ $# -gt 0 ]; do
+  if [ "$1" = "--model" ]; then model="$2"; fi
+  args="$args $1"
+  shift
+done
+printf '%s\n' "$args" > "$AGY_ARGS_FILE"
+if [ "$model" != "gemini-3.1-pro" ]; then exit 2; fi
+printf '%s\n' '{"event":"result","result":{"status":"SUCCESS","response":"ok"}}'
+`
+}
+
 func fakeAgyFailedStreamJSONScript() string {
 	return `#!/bin/sh
 [ "$1" = "models" ] && exit 0
@@ -563,6 +582,37 @@ func TestAntigravityBackendParsesStreamJSONUsage(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("timeout waiting for result")
+	}
+}
+
+func TestAntigravityBackendNormalizesModelBeforeValidation(t *testing.T) {
+	fakePath := filepath.Join(t.TempDir(), "agy")
+	writeTestExecutable(t, fakePath, []byte(fakeAgyModelResolutionScript()))
+	argsPath := filepath.Join(t.TempDir(), "args")
+	t.Setenv("AGY_ARGS_FILE", argsPath)
+
+	backend, err := New("antigravity", Config{ExecutablePath: fakePath, Logger: quietAntigravityLogger()})
+	if err != nil {
+		t.Fatalf("new antigravity backend: %v", err)
+	}
+	session, err := backend.Execute(context.Background(), "prompt-ignored", ExecOptions{Model: "Gemini 3.1 Pro"})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	go func() {
+		for range session.Messages {
+		}
+	}()
+	result := <-session.Result
+	if result.Status != "completed" {
+		t.Fatalf("result = %+v", result)
+	}
+	args, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatalf("read recorded args: %v", err)
+	}
+	if !strings.Contains(string(args), "--model gemini-3.1-pro") {
+		t.Fatalf("argv = %q, want bare model ID", args)
 	}
 }
 
