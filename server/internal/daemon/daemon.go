@@ -8234,6 +8234,11 @@ func configureCursorTaskStateEnvironment(agentEnv map[string]string, cursorDataD
 	}
 	switch strings.ToLower(strings.TrimSpace(daemonSharedStateOptIn)) {
 	case "1", "true", "yes", "on":
+		if _, present := agentEnv["CURSOR_DATA_DIR"]; present {
+			// The prepared task-local MCP approvals/auth are not visible when
+			// Cursor is allowed to use its user-global data directory.
+			slog.Default().Warn("Cursor shared state enabled; managed MCP task-local approvals and auth may not load")
+		}
 		delete(agentEnv, "CURSOR_DATA_DIR")
 	default:
 		agentEnv["CURSOR_DATA_DIR"] = cursorDataDir

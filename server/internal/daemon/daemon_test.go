@@ -214,7 +214,7 @@ func TestConfigureCursorTaskStateEnvironment(t *testing.T) {
 		initial, want        map[string]string
 	}{
 		{name: "default isolates", dataDir: "/task/cursor", want: map[string]string{"CURSOR_DATA_DIR": "/task/cursor"}},
-		{name: "truthy opt in", optIn: " YeS ", dataDir: "/task/cursor", initial: map[string]string{"OTHER": "keep"}, want: map[string]string{"OTHER": "keep"}},
+		{name: "truthy opt in", optIn: " YeS ", dataDir: "/task/cursor", initial: map[string]string{"CURSOR_DATA_DIR": "/stale", "OTHER": "keep"}, want: map[string]string{"OTHER": "keep"}},
 		{name: "falsy retains isolation", optIn: "0", dataDir: "/task/cursor", want: map[string]string{"CURSOR_DATA_DIR": "/task/cursor"}},
 		{name: "empty data dir", initial: map[string]string{"OTHER": "keep"}, want: map[string]string{"OTHER": "keep"}},
 	}
