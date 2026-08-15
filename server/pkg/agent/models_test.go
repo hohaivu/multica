@@ -1792,18 +1792,18 @@ func TestParseAntigravityModels(t *testing.T) {
 	t.Parallel()
 
 	out := strings.Join([]string{
-		"Gemini 3.5 Flash (Medium)",
-		"Claude Opus 4.6 (Thinking)",
+		"gemini-3.5-flash\tGemini 3.5 Flash (Medium)",
+		"claude-opus-4.6\tClaude Opus 4.6 (Thinking)",
 		"", // blank line — skipped
-		"GPT-OSS 120B (Medium)",
-		"Claude Opus 4.6 (Thinking)", // duplicate — collapsed
+		"gpt-oss-120b\tGPT-OSS 120B (Medium)",
+		"claude-opus-4.6\tClaude Opus 4.6 (Thinking)", // duplicate — collapsed
 	}, "\n")
 
 	got := parseAntigravityModels(out)
 	want := []Model{
-		{ID: "Gemini 3.5 Flash (Medium)", Label: "Gemini 3.5 Flash (Medium)", Provider: "antigravity"},
-		{ID: "Claude Opus 4.6 (Thinking)", Label: "Claude Opus 4.6 (Thinking)", Provider: "antigravity"},
-		{ID: "GPT-OSS 120B (Medium)", Label: "GPT-OSS 120B (Medium)", Provider: "antigravity"},
+		{ID: "gemini-3.5-flash", Label: "Gemini 3.5 Flash (Medium)", Provider: "antigravity"},
+		{ID: "claude-opus-4.6", Label: "Claude Opus 4.6 (Thinking)", Provider: "antigravity"},
+		{ID: "gpt-oss-120b", Label: "GPT-OSS 120B (Medium)", Provider: "antigravity"},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("parseAntigravityModels len = %d, want %d (%+v)", len(got), len(want), got)
@@ -1838,6 +1838,14 @@ func TestParseAntigravityModelsTabSeparated(t *testing.T) {
 
 	if err := antigravityModelError("gemini-3.6-flash-high", got); err != nil {
 		t.Fatalf("exact model slug from tab-separated catalog was rejected: %v", err)
+	}
+}
+
+func TestParseAntigravityModelsMalformedRecords(t *testing.T) {
+	got := parseAntigravityModels("\tLabel\nid\t\nid\tGood\n\t\nlegacy")
+	want := []Model{{ID: "id", Label: "id", Provider: "antigravity"}, {ID: "legacy", Label: "legacy", Provider: "antigravity"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v, want %+v", got, want)
 	}
 }
 

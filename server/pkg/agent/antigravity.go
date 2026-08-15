@@ -59,6 +59,7 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 	// hiccup (see antigravityModelError).
 	if opts.Model != "" {
 		catalog, _ := ListModels(ctx, "antigravity", b.cfg.commandAt(execPath))
+		opts.Model = normalizeAntigravityModel(opts.Model, catalog.Models)
 		if err := antigravityModelError(opts.Model, catalog.Models); err != nil {
 			return nil, err
 		}
@@ -639,6 +640,24 @@ func antigravityModelError(model string, available []Model) error {
 		"antigravity model %q is not available from `agy models`; pick one of: %s",
 		model, strings.Join(ids, ", "),
 	)
+}
+
+func normalizeAntigravityModel(model string, available []Model) string {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return ""
+	}
+	if parts := strings.SplitN(model, "\t", 2); len(parts) == 2 {
+		if id := strings.TrimSpace(parts[0]); id != "" {
+			return id
+		}
+	}
+	for _, candidate := range available {
+		if strings.TrimSpace(candidate.Label) == model {
+			return candidate.ID
+		}
+	}
+	return model
 }
 
 // antigravityNoCapPrintTimeout is the --print-timeout value used when the daemon
