@@ -44,6 +44,7 @@ type CommentResponse struct {
 	QuickActionID *string              `json:"quick_action_id,omitempty"`
 	Reactions     []ReactionResponse   `json:"reactions"`
 	Attachments   []AttachmentResponse `json:"attachments"`
+	Metadata      json.RawMessage      `json:"metadata"`
 	// Orientation stats — populated only on the roots_only path and omitted in
 	// every other mode, so the default response shape stays byte-identical for
 	// existing callers. ReplyCount is the number of descendants in the thread;
@@ -94,6 +95,10 @@ func commentToResponse(c db.Comment, reactions []ReactionResponse, attachments [
 	if attachments == nil {
 		attachments = []AttachmentResponse{}
 	}
+	metadata := json.RawMessage(c.Metadata)
+	if len(metadata) == 0 || string(metadata) == "null" {
+		metadata = json.RawMessage(`{}`)
+	}
 	return CommentResponse{
 		ID:             uuidToString(c.ID),
 		IssueID:        uuidToString(c.IssueID),
@@ -111,6 +116,7 @@ func commentToResponse(c db.Comment, reactions []ReactionResponse, attachments [
 		QuickActionID:  uuidToPtr(c.QuickActionID),
 		Reactions:      reactions,
 		Attachments:    attachments,
+		Metadata:       metadata,
 	}
 }
 
@@ -1744,14 +1750,13 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "metadata must be a JSON object no larger than 8192 bytes")
 		return
 	}
+	authorType, authorID := h.resolveActor(r, userID, uuidToString(issue.WorkspaceID))
 	if _, ok := metadata["ask_user_question"]; ok {
-		authorType, _ := h.resolveActor(r, userID, uuidToString(issue.WorkspaceID))
 		if authorType != "agent" {
 			writeError(w, http.StatusForbidden, "structured questions require an agent author")
 			return
 		}
 	}
-	authorType, authorID := h.resolveActor(r, userID, uuidToString(issue.WorkspaceID))
 	// Validate rather than letting the DB CHECK reject it: an unknown type
 	// previously surfaced as a 500 on a constraint violation, which reads as a
 	// server fault for what is plainly bad input. This is also the explicit
@@ -1897,6 +1902,7 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		Type:         req.Type,
 		ParentID:     parentID,
 		SourceTaskID: sourceTaskID,
+		Metadata:     []byte(req.Metadata),
 	})
 	if err != nil {
 		slog.Warn("create comment failed", append(logger.RequestAttrs(r), "error", err, "issue_id", issueID)...)

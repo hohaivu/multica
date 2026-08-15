@@ -163,7 +163,7 @@ WITH touched_issue AS (
     RETURNING issue.id, issue.workspace_id
 )
 INSERT INTO comment (issue_id, workspace_id, author_type, author_id, content, type, parent_id, source_task_id, quick_action_id, metadata)
-SELECT ti.id, ti.workspace_id, $1, $2, $3, $4, $5, $6, $7, $8::jsonb
+SELECT ti.id, ti.workspace_id, $1, $2, $3, $4, $5, $6, $7, COALESCE($8::jsonb, '{}'::jsonb)
 FROM touched_issue ti
 RETURNING id, issue_id, author_type, author_id, content, type, created_at, updated_at, parent_id, workspace_id, resolved_at, resolved_by_type, resolved_by_id, source_task_id, quick_action_id, metadata
 `

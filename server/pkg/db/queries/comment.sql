@@ -431,7 +431,7 @@ WITH touched_issue AS (
     RETURNING issue.id, issue.workspace_id
 )
 INSERT INTO comment (issue_id, workspace_id, author_type, author_id, content, type, parent_id, source_task_id, quick_action_id, metadata)
-SELECT ti.id, ti.workspace_id, sqlc.arg(author_type), sqlc.arg(author_id), sqlc.arg(content), sqlc.arg(type), sqlc.narg(parent_id), sqlc.narg(source_task_id), sqlc.narg(quick_action_id), sqlc.arg(metadata)::jsonb
+SELECT ti.id, ti.workspace_id, sqlc.arg(author_type), sqlc.arg(author_id), sqlc.arg(content), sqlc.arg(type), sqlc.narg(parent_id), sqlc.narg(source_task_id), sqlc.narg(quick_action_id), COALESCE(sqlc.arg(metadata)::jsonb, '{}'::jsonb)
 FROM touched_issue ti
 RETURNING *;
 
