@@ -1013,6 +1013,21 @@ describe("IssueDetail (shared)", () => {
   it("orders the Details section after the execution log", async () => {
     mockApiObj.listTasksByIssue.mockResolvedValue([
       {
+        id: "task-running",
+        agent_id: "agent-1",
+        runtime_id: "runtime-1",
+        issue_id: "issue-1",
+        status: "running",
+        priority: 0,
+        dispatched_at: "2026-06-08T08:00:00Z",
+        started_at: "2026-06-08T08:00:00Z",
+        completed_at: null,
+        result: null,
+        error: null,
+        created_at: "2026-06-08T08:00:00Z",
+        trigger_summary: "Started from comment",
+      },
+      {
         id: "task-past",
         agent_id: "agent-1",
         runtime_id: "runtime-1",
@@ -1034,6 +1049,9 @@ describe("IssueDetail (shared)", () => {
     await waitFor(() => {
       expect(screen.getByText("Details")).toBeInTheDocument();
     });
+    const log = screen.getByText("Execution log");
+    const details = screen.getByText("Details");
+    expect(log.compareDocumentPosition(details) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("shows 'not found' message when issue does not exist", async () => {

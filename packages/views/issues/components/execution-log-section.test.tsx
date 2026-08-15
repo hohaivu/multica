@@ -358,6 +358,41 @@ describe("execution log header geometry", () => {
   });
 });
 
+describe("execution log history visibility", () => {
+  function renderSection(tasks: AgentTask[], showPast = true) {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    queryClient.setQueryData(issueKeys.tasks("issue-1"), tasks);
+    return renderWithI18n(
+      <QueryClientProvider client={queryClient}>
+        <ExecutionLogSection issueId="issue-1" identifier="MUL-1" showPast={showPast} />
+      </QueryClientProvider>,
+    );
+  }
+
+  it("keeps the usage header when past rows are hidden", () => {
+    renderSection([makeTask({ status: "completed", usage: [usageSlice()] })], false);
+
+    expect(screen.getByText("Execution log")).toBeInTheDocument();
+    expect(screen.getByText("$2.00")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Show past runs/ })).not.toBeInTheDocument();
+  });
+
+  it("keeps active rows visible while hiding past rows", () => {
+    renderSection(
+      [
+        makeTask({ status: "running" }),
+        makeTask({ id: "task-done", status: "completed" }),
+      ],
+      false,
+    );
+
+    expect(screen.getByText("Started from comment")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Show past runs/ })).not.toBeInTheDocument();
+  });
+});
+
 describe("IssueUsageTotal pricing", () => {
   afterEach(() => {
     useCustomPricingStore.setState({ pricings: {} });

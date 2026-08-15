@@ -158,14 +158,15 @@ function ActiveChip({
           { count: agentIds.length },
         );
 
-  const [showPast, setShowPast] = useState(() => !hasActive);
+  const [popoverOpened, setPopoverOpened] = useState(false);
+  const [showPast, setShowPast] = useState(false);
   useEffect(() => {
     setShowPast(!hasActive);
   }, [hasActive]);
 
   return (
     <div className="flex items-center gap-1">
-      <Popover>
+      <Popover onOpenChange={(open) => setPopoverOpened((wasOpened) => wasOpened || open)}>
         {/* Hover opens the card so the live activity reads as a glanceable
             status surface, not a click target. In Base UI the hover config
             lives on the Trigger (a popover can have multiple triggers), not
@@ -233,13 +234,19 @@ function ActiveChip({
                 }}
               />
             ))}
-            {past.length > 0 && (
+            {popoverOpened && past.length > 0 && (
               <>
                 {activeTasks.length > 0 && <div className="my-1.5 border-t border-border/60" />}
                 <button
                   type="button"
                   aria-expanded={showPast}
-                  aria-label={historyLabel}
+                  aria-label={t(
+                    ($) =>
+                      showPast
+                        ? $.execution_log.hide_past
+                        : $.execution_log.show_past,
+                    { count: past.length },
+                  )}
                   onClick={() => setShowPast((open) => !open)}
                   className="flex w-full items-center gap-1 rounded px-1 py-1 text-caption text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground"
                 >

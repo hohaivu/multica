@@ -323,9 +323,7 @@ describe("IssueAgentHeaderChip", () => {
     expect(screen.getByText("Walt 在工作")).toBeInTheDocument();
   });
 
-  it("does not render when the issue has only terminal tasks", () => {
-    // The list is issue-scoped by the endpoint, so the chip's only job is to
-    // ignore terminal statuses (those are the execution log's story).
+  it("renders terminal history in the header", () => {
     mockState.tasks = [
       makeTask({
         id: "task-done",
@@ -341,6 +339,7 @@ describe("IssueAgentHeaderChip", () => {
 
     renderWithI18n(<IssueAgentHeaderChip issueId="issue-1" />);
 
-    expect(screen.queryAllByRole("button", { name: "Historical runs" })).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "Historical runs" })).toBeInTheDocument();
+    expect(screen.queryByTestId("past-task-row")).not.toBeInTheDocument();
   });
 });

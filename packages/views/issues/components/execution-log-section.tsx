@@ -129,7 +129,7 @@ export function ExecutionLogSection({
 
   const pastTasks = useMemo(() => sortPastTasks(tasks), [tasks]);
 
-  if (activeTasks.length === 0 && (!showPastRuns || pastTasks.length === 0)) return null;
+  if (activeTasks.length === 0 && pastTasks.length === 0) return null;
 
   return (
     // `@container/execution-log`: the header's three items only fit side by
