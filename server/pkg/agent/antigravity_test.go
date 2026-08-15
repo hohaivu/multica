@@ -566,6 +566,20 @@ func TestAntigravityBackendParsesStreamJSONUsage(t *testing.T) {
 	}
 }
 
+func TestNormalizeAntigravityModel(t *testing.T) {
+	available := []Model{{ID: "model-id", Label: "Display Label"}}
+	for _, tt := range []struct{ input, want string }{
+		{"model-id", "model-id"},
+		{"model-id\tDisplay Label", "model-id"},
+		{"Display Label", "model-id"},
+		{"unknown", "unknown"},
+	} {
+		if got := normalizeAntigravityModel(tt.input, available); got != tt.want {
+			t.Errorf("normalizeAntigravityModel(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
 func TestAntigravityBackendReportsUsageOnStructuredFailure(t *testing.T) {
 	t.Parallel()
 
