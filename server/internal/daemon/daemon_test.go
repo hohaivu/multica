@@ -208,6 +208,30 @@ func TestConfigureClaudeTaskMemoryEnvironment(t *testing.T) {
 	}
 }
 
+func TestConfigureCursorTaskStateEnvironment(t *testing.T) {
+	tests := []struct {
+		name, optIn, dataDir string
+		initial, want        map[string]string
+	}{
+		{name: "default isolates", dataDir: "/task/cursor", want: map[string]string{"CURSOR_DATA_DIR": "/task/cursor"}},
+		{name: "truthy opt in", optIn: " YeS ", dataDir: "/task/cursor", initial: map[string]string{"OTHER": "keep"}, want: map[string]string{"OTHER": "keep"}},
+		{name: "falsy retains isolation", optIn: "0", dataDir: "/task/cursor", want: map[string]string{"CURSOR_DATA_DIR": "/task/cursor"}},
+		{name: "empty data dir", initial: map[string]string{"OTHER": "keep"}, want: map[string]string{"OTHER": "keep"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := maps.Clone(tt.initial)
+			if env == nil {
+				env = map[string]string{}
+			}
+			configureCursorTaskStateEnvironment(env, tt.dataDir, tt.optIn)
+			if !maps.Equal(env, tt.want) {
+				t.Fatalf("cursor env = %#v, want %#v", env, tt.want)
+			}
+		})
+	}
+}
+
 func TestPrepareReasonixTaskStateHome(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

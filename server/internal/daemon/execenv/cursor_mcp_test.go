@@ -278,7 +278,19 @@ func TestPrepareCursorMcpConfigNilIsolatesProjectState(t *testing.T) {
 	if err := os.MkdirAll(workDir, 0o755); err != nil {
 		t.Fatalf("mkdir workDir: %v", err)
 	}
-	cursorDataDir, err := prepareCursorMcpConfig(envRoot, workDir, nil, "", &sidecarManifest{})
+	projectDir := filepath.Join(envRoot, "cursor-data", "projects", cursorSlugifyPath(cursorProjectRoot(workDir)))
+	if err := os.MkdirAll(projectDir, 0o700); err != nil {
+		t.Fatalf("mkdir project dir: %v", err)
+	}
+	staleApprovals := filepath.Join(projectDir, "mcp-approvals.json")
+	if err := os.WriteFile(staleApprovals, []byte(`{"stale":true}`), 0o600); err != nil {
+		t.Fatalf("write stale approvals: %v", err)
+	}
+	authSource := filepath.Join(envRoot, "mcp-auth.json")
+	if err := os.WriteFile(authSource, []byte(`{"oauth":true}`), 0o600); err != nil {
+		t.Fatalf("write auth source: %v", err)
+	}
+	cursorDataDir, err := prepareCursorMcpConfig(envRoot, workDir, nil, authSource, &sidecarManifest{})
 	if err != nil {
 		t.Fatalf("prepareCursorMcpConfig: %v", err)
 	}
@@ -287,6 +299,13 @@ func TestPrepareCursorMcpConfigNilIsolatesProjectState(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(workDir, ".cursor", "mcp.json")); !os.IsNotExist(err) {
 		t.Fatalf(".cursor/mcp.json should not exist, stat err=%v", err)
+	}
+	if _, err := os.Stat(staleApprovals); !os.IsNotExist(err) {
+		t.Fatalf("stale mcp-approvals.json should be removed, stat err=%v", err)
+	}
+	authPath := filepath.Join(cursorDataDir, "projects", cursorSlugifyPath(cursorProjectRoot(workDir)), "mcp-auth.json")
+	if _, err := os.Stat(authPath); err != nil {
+		t.Fatalf("nil-MCP auth should be seeded: %v", err)
 	}
 	trusted := filepath.Join(cursorDataDir, "projects", cursorSlugifyPath(cursorProjectRoot(workDir)), cursorWorkspaceTrustedFile)
 	if filePerm(t, trusted) != 0o600 {

@@ -6562,13 +6562,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// (Hermes HERMES_HOME is applied after custom_env below so the per-task
 	// overlay can win over a user-set HERMES_HOME; see
 	// layerCustomEnvAndHermesHome.)
-	// Point Cursor at per-task project state when managed MCP is present.
-	// The workdir .cursor/mcp.json carries the managed server list, while
-	// CURSOR_DATA_DIR isolates the matching project approvals from the user's
-	// persistent ~/.cursor/projects state.
-	if env.CursorDataDir != "" {
-		agentEnv["CURSOR_DATA_DIR"] = env.CursorDataDir
-	}
+	// Cursor project state is isolated for every task by default. Operators
+	// can explicitly retain user-global Cursor state with MULTICA_CURSOR_SHARED_STATE.
+	configureCursorTaskStateEnvironment(agentEnv, env.CursorDataDir, os.Getenv("MULTICA_CURSOR_SHARED_STATE"))
 	// Point OpenClaw at the per-task synthesized config. The config pins
 	// agents.defaults.workspace (and any agents.list[].workspace) to the
 	// task workdir, so the CLI's native skill scanner picks up the per-task
@@ -8226,6 +8222,21 @@ func configureClaudeTaskMemoryEnvironment(provider string, agentEnv map[string]s
 		delete(agentEnv, "CLAUDE_CODE_DISABLE_AUTO_MEMORY")
 	default:
 		agentEnv["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] = "1"
+	}
+}
+
+// configureCursorTaskStateEnvironment keeps Cursor project state task-local by
+// default. The daemon-level opt-in is an explicit compatibility escape hatch
+// for operators who need user-global MCP, config, or auth state.
+func configureCursorTaskStateEnvironment(agentEnv map[string]string, cursorDataDir, daemonSharedStateOptIn string) {
+	if cursorDataDir == "" {
+		return
+	}
+	switch strings.ToLower(strings.TrimSpace(daemonSharedStateOptIn)) {
+	case "1", "true", "yes", "on":
+		delete(agentEnv, "CURSOR_DATA_DIR")
+	default:
+		agentEnv["CURSOR_DATA_DIR"] = cursorDataDir
 	}
 }
 

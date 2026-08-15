@@ -272,10 +272,10 @@ type Environment struct {
 	// directory holding the wrapper file. Empty when no $include is
 	// emitted (fresh install).
 	OpenclawIncludeRoot string
-	// CursorDataDir is the per-task Cursor data directory (set only for
-	// cursor provider when the agent has managed mcp_config). The daemon
-	// exports this as CURSOR_DATA_DIR so project-level MCP approvals are
-	// isolated from the user's persistent ~/.cursor/projects state.
+	// CursorDataDir is the per-task Cursor data directory. The daemon exports
+	// this as CURSOR_DATA_DIR by default so project state is isolated from the
+	// user's persistent ~/.cursor/projects state; a daemon-level compatibility
+	// opt-in can leave CursorDataDir unset in the subprocess environment.
 	CursorDataDir string
 	// HermesHome is the path to the per-task HERMES_HOME overlay (set only for
 	// the hermes provider, and only when the agent has skills bound — empty
@@ -548,11 +548,9 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 		}
 	}
 
-	// For Cursor, materialize managed MCP into project-local config and use
-	// an isolated CURSOR_DATA_DIR for the per-workdir approval sidecar. Cursor
-	// still reads ~/.cursor/mcp.json, but only servers with approval entries in
-	// this per-task data dir can load, so user-global MCP servers do not leak
-	// into managed-MCP runs.
+	// For Cursor, prepare task-local project state for every task. Managed MCP
+	// is materialized into project-local config and approvals remain isolated;
+	// nil MCP leaves the managed config absent while preserving the trust marker.
 	if params.Provider == "cursor" {
 		cursorDataDir, err := prepareCursorMcpConfig(envRoot, workDir, params.McpConfig, params.CursorMcpAuthSource, manifest)
 		if err != nil {
