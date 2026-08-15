@@ -45,36 +45,36 @@ type cursorRemoteMcpApprovalServer struct {
 	Headers json.RawMessage `json:"headers,omitempty"`
 }
 
-// prepareCursorMcpConfig writes the Cursor-native MCP sidecars for agents that
-// have an explicit managed mcp_config saved. A nil/null mcp_config means "let
-// Cursor behave normally", so no .cursor/mcp.json or CURSOR_DATA_DIR is created.
+// prepareCursorMcpConfig writes Cursor-native MCP sidecars and task-local
+// project state. A nil/null mcp_config skips managed MCP files but still keeps
+// Cursor's project state isolated from other tasks.
 func prepareCursorMcpConfig(envRoot, workDir string, mcpConfig json.RawMessage, mcpAuthSource string, manifest *sidecarManifest) (string, error) {
-	if !hasManagedCursorMcpConfig(mcpConfig) {
-		return "", nil
-	}
 	if envRoot == "" {
-		return "", fmt.Errorf("env root is required for managed cursor mcp_config")
+		return "", fmt.Errorf("env root is required for cursor task state")
 	}
 
 	projectRoot := cursorProjectRoot(workDir)
-	servers, err := parseCursorManagedMcpServers(mcpConfig)
-	if err != nil {
-		return "", err
-	}
-
-	cursorDir := filepath.Join(projectRoot, ".cursor")
-	if err := recordMkdirAll(cursorDir, 0o755, manifest); err != nil {
-		return "", fmt.Errorf("create .cursor dir: %w", err)
-	}
-	configData, err := marshalCursorMcpConfig(servers)
-	if err != nil {
-		return "", err
-	}
-	if err := recordWriteFile(filepath.Join(cursorDir, "mcp.json"), configData, 0o600, manifest); err != nil {
-		if errors.Is(err, errPathPreExists) {
-			return "", fmt.Errorf("managed cursor mcp_config would overwrite existing .cursor/mcp.json")
+	var servers map[string]json.RawMessage
+	if hasManagedCursorMcpConfig(mcpConfig) {
+		var err error
+		servers, err = parseCursorManagedMcpServers(mcpConfig)
+		if err != nil {
+			return "", err
 		}
-		return "", fmt.Errorf("write .cursor/mcp.json: %w", err)
+		cursorDir := filepath.Join(projectRoot, ".cursor")
+		if err := recordMkdirAll(cursorDir, 0o755, manifest); err != nil {
+			return "", fmt.Errorf("create .cursor dir: %w", err)
+		}
+		configData, err := marshalCursorMcpConfig(servers)
+		if err != nil {
+			return "", err
+		}
+		if err := recordWriteFile(filepath.Join(cursorDir, "mcp.json"), configData, 0o600, manifest); err != nil {
+			if errors.Is(err, errPathPreExists) {
+				return "", fmt.Errorf("managed cursor mcp_config would overwrite existing .cursor/mcp.json")
+			}
+			return "", fmt.Errorf("write .cursor/mcp.json: %w", err)
+		}
 	}
 
 	cursorDataDir := filepath.Join(envRoot, "cursor-data")
@@ -85,16 +85,23 @@ func prepareCursorMcpConfig(envRoot, workDir string, mcpConfig json.RawMessage, 
 	if err := removeCursorMcpAuthFile(projectDataDir); err != nil {
 		return "", err
 	}
-	approvals, err := cursorMcpApprovalKeys(projectRoot, servers)
-	if err != nil {
-		return "", err
-	}
-	approvalData, err := json.MarshalIndent(approvals, "", "  ")
-	if err != nil {
-		return "", fmt.Errorf("marshal cursor mcp approvals: %w", err)
-	}
-	if err := os.WriteFile(filepath.Join(projectDataDir, "mcp-approvals.json"), approvalData, 0o600); err != nil {
-		return "", fmt.Errorf("write cursor mcp approvals: %w", err)
+	approvalPath := filepath.Join(projectDataDir, "mcp-approvals.json")
+	if !hasManagedCursorMcpConfig(mcpConfig) {
+		if err := os.Remove(approvalPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return "", fmt.Errorf("remove prior cursor mcp approvals: %w", err)
+		}
+	} else {
+		approvals, err := cursorMcpApprovalKeys(projectRoot, servers)
+		if err != nil {
+			return "", err
+		}
+		approvalData, err := json.MarshalIndent(approvals, "", "  ")
+		if err != nil {
+			return "", fmt.Errorf("marshal cursor mcp approvals: %w", err)
+		}
+		if err := os.WriteFile(approvalPath, approvalData, 0o600); err != nil {
+			return "", fmt.Errorf("write cursor mcp approvals: %w", err)
+		}
 	}
 	trustData, err := json.MarshalIndent(map[string]string{
 		"trustedAt":     "1970-01-01T00:00:00Z",

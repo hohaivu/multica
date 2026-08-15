@@ -6595,6 +6595,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		agentCustomEnv = task.Agent.CustomEnv
 	}
 	layerCustomEnvAndHermesHome(agentEnv, agentCustomEnv, env.HermesHome, d.logger)
+	configureClaudeTaskMemoryEnvironment(provider, agentEnv, os.Getenv("MULTICA_CLAUDE_MEMORY"))
 	if provider == "reasonix" {
 		reasonixStateHome, err := prepareReasonixTaskStateHome(d.cfg.Profile, task.RuntimeID, task.AgentID)
 		if err != nil {
@@ -8110,7 +8111,7 @@ func isBlockedEnvKey(key string) bool {
 		return true
 	}
 	switch upper {
-	case "HOME", "PATH", "USER", "SHELL", "TERM", "TMPDIR", "TMP", "TEMP", "CODEX_HOME", "REASONIX_STATE_HOME", "CURSOR_DATA_DIR", execenv.CursorMcpAuthSourceEnv, "OPENCLAW_CONFIG_PATH", "OPENCLAW_INCLUDE_ROOTS":
+	case "HOME", "PATH", "USER", "SHELL", "TERM", "TMPDIR", "TMP", "TEMP", "CODEX_HOME", "REASONIX_STATE_HOME", "CURSOR_DATA_DIR", "CLAUDE_CODE_DISABLE_AUTO_MEMORY", execenv.CursorMcpAuthSourceEnv, "OPENCLAW_CONFIG_PATH", "OPENCLAW_INCLUDE_ROOTS":
 		return true
 	}
 	return false
@@ -8213,6 +8214,18 @@ func layerCustomEnvAndHermesHome(agentEnv, customEnv map[string]string, overlayH
 	}
 	if overlayHome != "" {
 		agentEnv["HERMES_HOME"] = overlayHome
+	}
+}
+
+func configureClaudeTaskMemoryEnvironment(provider string, agentEnv map[string]string, daemonMemoryOptIn string) {
+	if provider != "claude" {
+		return
+	}
+	switch strings.ToLower(strings.TrimSpace(daemonMemoryOptIn)) {
+	case "1", "true", "yes", "on":
+		delete(agentEnv, "CLAUDE_CODE_DISABLE_AUTO_MEMORY")
+	default:
+		agentEnv["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] = "1"
 	}
 }
 

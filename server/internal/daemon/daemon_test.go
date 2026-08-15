@@ -159,6 +159,8 @@ func TestIsBlockedEnvKey(t *testing.T) {
 		{key: "CODEX_HOME", want: true},
 		{key: "REASONIX_STATE_HOME", want: true},
 		{key: "CURSOR_DATA_DIR", want: true},
+		{key: "CLAUDE_CODE_DISABLE_AUTO_MEMORY", want: true},
+		{key: "claude_code_disable_auto_memory", want: true},
 		{key: "cursor_data_dir", want: true},
 		{key: "CURSOR_MCP_AUTH_SOURCE", want: true},
 		{key: "OPENCLAW_CONFIG_PATH", want: true},
@@ -180,6 +182,27 @@ func TestIsBlockedEnvKey(t *testing.T) {
 			t.Parallel()
 			if got := isBlockedEnvKey(tt.key); got != tt.want {
 				t.Fatalf("isBlockedEnvKey(%q) = %v, want %v", tt.key, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestConfigureClaudeTaskMemoryEnvironment(t *testing.T) {
+	tests := []struct {
+		name, provider, optIn, want string
+		custom, wantEnv             map[string]string
+	}{
+		{name: "default blocks hostile override", provider: "claude", custom: map[string]string{"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "0"}, wantEnv: map[string]string{"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}},
+		{name: "opt in", provider: "claude", optIn: "1", wantEnv: map[string]string{}},
+		{name: "non claude unchanged", provider: "codex", custom: map[string]string{"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "0"}, wantEnv: map[string]string{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := map[string]string{}
+			layerCustomEnvAndHermesHome(env, tt.custom, "", nil)
+			configureClaudeTaskMemoryEnvironment(tt.provider, env, tt.optIn)
+			if !maps.Equal(env, tt.wantEnv) {
+				t.Fatalf("memory env = %#v, want %#v", env, tt.wantEnv)
 			}
 		})
 	}

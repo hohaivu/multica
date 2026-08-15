@@ -270,7 +270,7 @@ func TestPrepareCursorMcpConfigRejectsArbitraryAuthSourceFile(t *testing.T) {
 	}
 }
 
-func TestPrepareCursorMcpConfigNilDoesNotTakeOwnership(t *testing.T) {
+func TestPrepareCursorMcpConfigNilIsolatesProjectState(t *testing.T) {
 	t.Parallel()
 
 	envRoot := t.TempDir()
@@ -282,11 +282,15 @@ func TestPrepareCursorMcpConfigNilDoesNotTakeOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatalf("prepareCursorMcpConfig: %v", err)
 	}
-	if cursorDataDir != "" {
-		t.Fatalf("CursorDataDir = %q, want empty", cursorDataDir)
+	if cursorDataDir != filepath.Join(envRoot, "cursor-data") {
+		t.Fatalf("CursorDataDir = %q, want envRoot/cursor-data", cursorDataDir)
 	}
 	if _, err := os.Stat(filepath.Join(workDir, ".cursor", "mcp.json")); !os.IsNotExist(err) {
 		t.Fatalf(".cursor/mcp.json should not exist, stat err=%v", err)
+	}
+	trusted := filepath.Join(cursorDataDir, "projects", cursorSlugifyPath(cursorProjectRoot(workDir)), cursorWorkspaceTrustedFile)
+	if filePerm(t, trusted) != 0o600 {
+		t.Fatalf("workspace trust mode = %o, want 600", filePerm(t, trusted))
 	}
 }
 
