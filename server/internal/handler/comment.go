@@ -95,10 +95,7 @@ func commentToResponse(c db.Comment, reactions []ReactionResponse, attachments [
 	if attachments == nil {
 		attachments = []AttachmentResponse{}
 	}
-	metadata := json.RawMessage(c.Metadata)
-	if len(metadata) == 0 || string(metadata) == "null" {
-		metadata = json.RawMessage(`{}`)
-	}
+	metadata := normalizedCommentMetadata(c.Metadata)
 	return CommentResponse{
 		ID:             uuidToString(c.ID),
 		IssueID:        uuidToString(c.IssueID),
@@ -118,6 +115,13 @@ func commentToResponse(c db.Comment, reactions []ReactionResponse, attachments [
 		Attachments:    attachments,
 		Metadata:       metadata,
 	}
+}
+
+func normalizedCommentMetadata(raw []byte) json.RawMessage {
+	if len(raw) == 0 || string(raw) == "null" {
+		return json.RawMessage(`{}`)
+	}
+	return json.RawMessage(raw)
 }
 
 // summaryContentRunes bounds comment content under summary=true. 200 runes is
@@ -1746,8 +1750,18 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		req.Metadata = json.RawMessage(`{}`)
 	}
 	var metadata map[string]json.RawMessage
-	if err := json.Unmarshal(req.Metadata, &metadata); err != nil || metadata == nil || len(req.Metadata) > 8192 {
-		writeError(w, http.StatusBadRequest, "metadata must be a JSON object no larger than 8192 bytes")
+	if err := json.Unmarshal(req.Metadata, &metadata); err != nil || metadata == nil {
+		writeError(w, http.StatusBadRequest, "metadata must be a JSON object")
+		return
+	}
+	for key, value := range metadata {
+		if key != "ask_user_question" || bytes.IndexByte(value, 0) >= 0 {
+			writeError(w, http.StatusBadRequest, "metadata contains an unsupported or invalid field")
+			return
+		}
+	}
+	if len(req.Metadata) > 8192 {
+		writeError(w, http.StatusBadRequest, "metadata must be no larger than 8192 bytes")
 		return
 	}
 	authorType, authorID := h.resolveActor(r, userID, uuidToString(issue.WorkspaceID))
