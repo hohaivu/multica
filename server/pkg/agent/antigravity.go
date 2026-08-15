@@ -1,17 +1,22 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
+
+var antigravityTranscriptPollInterval = 30 * time.Second
 
 // antigravityBackend implements Backend by spawning Google's Antigravity CLI
 // with a one-shot prompt (`agy -p <prompt>`). Despite the upstream flag name,
@@ -117,6 +122,29 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 		defer close(msgCh)
 		defer close(resCh)
 		defer os.Remove(logPath)
+		tailCtx, stopTail := context.WithCancel(runCtx)
+		tailDone := make(chan struct{})
+		defer func() {
+			stopTail()
+			<-tailDone
+		}()
+		tailStarted := false
+		var tailDoneOnce sync.Once
+		startTail := func(sessionID string) {
+			if sessionID == "" || tailStarted {
+				return
+			}
+			appDataDir := readAntigravityAppDataDir(logPath)
+			if appDataDir == "" {
+				return
+			}
+			tailStarted = true
+			path := filepath.Join(appDataDir, "brain", sessionID, ".system_generated", "logs", "transcript.jsonl")
+			go func() {
+				defer tailDoneOnce.Do(func() { close(tailDone) })
+				tailAntigravityTranscript(tailCtx, path, msgCh, b.cfg.Logger)
+			}()
+		}
 
 		startTime := time.Now()
 		var output strings.Builder
@@ -153,12 +181,14 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 			switch event.Event {
 			case "init":
 				structuredSessionID = event.ConversationID
+				startTail(structuredSessionID)
 			case "step_update":
 				if event.StepUpdate == nil {
 					continue
 				}
 				if event.StepUpdate.ConversationID != "" {
 					structuredSessionID = event.StepUpdate.ConversationID
+					startTail(structuredSessionID)
 				}
 				if event.StepUpdate.State == "DONE" && event.StepUpdate.Usage != nil {
 					stepUsage[event.StepUpdate.StepIndex] = event.StepUpdate.Usage.tokenUsage()
@@ -173,6 +203,7 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 				}
 				if event.Result.ConversationID != "" {
 					structuredSessionID = event.Result.ConversationID
+					startTail(structuredSessionID)
 				}
 				structuredStatus = event.Result.Status
 				structuredOutput = event.Result.Response
@@ -192,6 +223,11 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 		sessionID := structuredSessionID
 		if sessionID == "" {
 			sessionID = readAntigravityConversationID(logPath)
+		}
+		startTail(sessionID)
+		if !tailStarted {
+			stopTail()
+			tailDoneOnce.Do(func() { close(tailDone) })
 		}
 
 		if runCtx.Err() == context.DeadlineExceeded {
@@ -452,10 +488,91 @@ var antigravityAppDataDirRe = regexp.MustCompile(`CLI app data directory:\s*(.+)
 // step — it is RawMessage so a null or non-string value is skipped rather than
 // failing the whole line.
 type antigravityTranscriptRecord struct {
-	Type    string          `json:"type"`
-	Source  string          `json:"source"`
-	Status  string          `json:"status"`
+	Type      string `json:"type"`
+	Source    string `json:"source"`
+	Status    string `json:"status"`
+	StepIndex int    `json:"step_index"`
+	ToolCalls []struct {
+		Name string         `json:"name"`
+		Args map[string]any `json:"args"`
+	} `json:"tool_calls"`
 	Content json.RawMessage `json:"content"`
+}
+
+func tailAntigravityTranscript(ctx context.Context, transcriptPath string, msgCh chan<- Message, logger *slog.Logger) {
+	ticker := time.NewTicker(antigravityTranscriptPollInterval)
+	defer ticker.Stop()
+	var offset int64
+	var initialized bool
+	var callID uint64
+	pending := make([]string, 0)
+	for {
+		if err := tailAntigravityTranscriptOnce(ctx, transcriptPath, msgCh, logger, &offset, &initialized, &callID, &pending); err != nil && logger != nil {
+			logger.Debug("antigravity transcript tail failed", "err", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func tailAntigravityTranscriptOnce(ctx context.Context, path string, msgCh chan<- Message, _ *slog.Logger, offset *int64, initialized *bool, callID *uint64, pending *[]string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if !*initialized {
+		*offset = info.Size()
+		*initialized = true
+		return nil
+	}
+	if info.Size() < *offset {
+		*offset = info.Size()
+		return nil
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if _, err := f.Seek(*offset, 0); err != nil {
+		return err
+	}
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return err
+	}
+	complete := data
+	if n := bytes.LastIndexByte(data, '\n'); n < 0 {
+		return nil
+	} else {
+		complete = data[:n+1]
+	}
+	*offset += int64(len(complete))
+	for _, line := range bytes.Split(complete, []byte{'\n'}) {
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		var rec antigravityTranscriptRecord
+		if json.Unmarshal(line, &rec) != nil {
+			continue
+		}
+		if rec.Type == "PLANNER_RESPONSE" && len(rec.ToolCalls) > 0 {
+			for _, call := range rec.ToolCalls {
+				*callID++
+				id := fmt.Sprintf("antigravity-tool-%d", *callID)
+				trySend(msgCh, Message{Type: MessageToolUse, Tool: call.Name, CallID: id, Input: call.Args})
+				*pending = append(*pending, id)
+			}
+		} else if rec.Source == "MODEL" && rec.Type != "PLANNER_RESPONSE" && len(*pending) > 0 {
+			id := (*pending)[0]
+			*pending = (*pending)[1:]
+			trySend(msgCh, Message{Type: MessageToolResult, CallID: id, Output: string(rec.Content)})
+		}
+	}
+	return nil
 }
 
 // readAntigravityTranscriptOutput recovers the assistant's text from agy's
