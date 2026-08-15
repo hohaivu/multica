@@ -124,12 +124,15 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 		defer os.Remove(logPath)
 		tailCtx, stopTail := context.WithCancel(runCtx)
 		tailDone := make(chan struct{})
+		tailStarted := false
+		var tailDoneOnce sync.Once
 		defer func() {
 			stopTail()
 			<-tailDone
+			if !tailStarted {
+				tailDoneOnce.Do(func() { close(tailDone) })
+			}
 		}()
-		tailStarted := false
-		var tailDoneOnce sync.Once
 		startTail := func(sessionID string) {
 			if sessionID == "" || tailStarted {
 				return
@@ -225,11 +228,6 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 			sessionID = readAntigravityConversationID(logPath)
 		}
 		startTail(sessionID)
-		if !tailStarted {
-			stopTail()
-			tailDoneOnce.Do(func() { close(tailDone) })
-		}
-
 		if runCtx.Err() == context.DeadlineExceeded {
 			finalStatus = "timeout"
 			finalError = fmt.Sprintf("agy timed out after %s", timeout)
@@ -505,9 +503,10 @@ func tailAntigravityTranscript(ctx context.Context, transcriptPath string, msgCh
 	var offset int64
 	var initialized bool
 	var callID uint64
-	pending := make([]string, 0)
+	pending := make(map[int]string)
+	earlyResults := make(map[int]string)
 	for {
-		if err := tailAntigravityTranscriptOnce(ctx, transcriptPath, msgCh, logger, &offset, &initialized, &callID, &pending); err != nil && logger != nil {
+		if err := tailAntigravityTranscriptOnce(ctx, transcriptPath, msgCh, logger, &offset, &initialized, &callID, &pending, &earlyResults); err != nil && logger != nil {
 			logger.Debug("antigravity transcript tail failed", "err", err)
 		}
 		select {
@@ -518,7 +517,7 @@ func tailAntigravityTranscript(ctx context.Context, transcriptPath string, msgCh
 	}
 }
 
-func tailAntigravityTranscriptOnce(ctx context.Context, path string, msgCh chan<- Message, _ *slog.Logger, offset *int64, initialized *bool, callID *uint64, pending *[]string) error {
+func tailAntigravityTranscriptOnce(ctx context.Context, path string, msgCh chan<- Message, _ *slog.Logger, offset *int64, initialized *bool, callID *uint64, pending *map[int]string, earlyResults *map[int]string) error {
 	info, err := os.Stat(path)
 	if err != nil {
 		if !*initialized && os.IsNotExist(err) {
@@ -565,20 +564,29 @@ func tailAntigravityTranscriptOnce(ctx context.Context, path string, msgCh chan<
 			continue
 		}
 		if rec.Type == "PLANNER_RESPONSE" && rec.Source == "MODEL" && rec.Status == "DONE" && len(rec.ToolCalls) > 0 {
-			for _, call := range rec.ToolCalls {
+			for i, call := range rec.ToolCalls {
 				*callID++
 				id := fmt.Sprintf("antigravity-tool-%d", *callID)
 				trySend(msgCh, Message{Type: MessageToolUse, Tool: call.Name, CallID: id, Input: call.Args})
-				*pending = append(*pending, id)
+				step := rec.StepIndex + 1 + i
+				(*pending)[step] = id
+				if output, ok := (*earlyResults)[step]; ok {
+					trySend(msgCh, Message{Type: MessageToolResult, CallID: id, Output: output})
+					delete(*pending, step)
+					delete(*earlyResults, step)
+				}
 			}
-		} else if rec.Source == "MODEL" && rec.Type != "PLANNER_RESPONSE" && len(*pending) > 0 {
-			id := (*pending)[0]
-			*pending = (*pending)[1:]
+		} else if rec.Source == "MODEL" && rec.Type != "PLANNER_RESPONSE" {
 			var output string
 			if err := json.Unmarshal(rec.Content, &output); err != nil {
 				output = string(rec.Content)
 			}
-			trySend(msgCh, Message{Type: MessageToolResult, CallID: id, Output: output})
+			if id, ok := (*pending)[rec.StepIndex]; ok {
+				trySend(msgCh, Message{Type: MessageToolResult, CallID: id, Output: output})
+				delete(*pending, rec.StepIndex)
+			} else {
+				(*earlyResults)[rec.StepIndex] = output
+			}
 		}
 	}
 	return nil

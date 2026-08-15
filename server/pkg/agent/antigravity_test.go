@@ -39,17 +39,18 @@ func TestTailAntigravityTranscriptOrderingAndOutput(t *testing.T) {
 	var offset int64
 	initialized := false
 	var callID uint64
-	pending := []string(nil)
+	pending := map[int]string{}
+	earlyResults := map[int]string{}
 	msgs := make(chan Message, 4)
 
-	if err := tailAntigravityTranscriptOnce(context.Background(), path, msgs, nil, &offset, &initialized, &callID, &pending); err != nil {
+	if err := tailAntigravityTranscriptOnce(context.Background(), path, msgs, nil, &offset, &initialized, &callID, &pending, &earlyResults); err != nil {
 		t.Fatal(err)
 	}
 	appendAntigravityTranscriptRecord(t, path, map[string]any{
 		"type": "PLANNER_RESPONSE", "source": "MODEL", "status": "DONE",
 		"tool_calls": []map[string]any{{"name": "run_command", "args": map[string]any{"command": "pwd"}}},
 	})
-	if err := tailAntigravityTranscriptOnce(context.Background(), path, msgs, nil, &offset, &initialized, &callID, &pending); err != nil {
+	if err := tailAntigravityTranscriptOnce(context.Background(), path, msgs, nil, &offset, &initialized, &callID, &pending, &earlyResults); err != nil {
 		t.Fatal(err)
 	}
 	toolUse := <-msgs
@@ -59,7 +60,7 @@ func TestTailAntigravityTranscriptOrderingAndOutput(t *testing.T) {
 	appendAntigravityTranscriptRecord(t, path, map[string]any{
 		"type": "RUN_COMMAND", "source": "MODEL", "status": "DONE", "content": "completed\n",
 	})
-	if err := tailAntigravityTranscriptOnce(context.Background(), path, msgs, nil, &offset, &initialized, &callID, &pending); err != nil {
+	if err := tailAntigravityTranscriptOnce(context.Background(), path, msgs, nil, &offset, &initialized, &callID, &pending, &earlyResults); err != nil {
 		t.Fatal(err)
 	}
 	toolResult := <-msgs
@@ -77,16 +78,17 @@ func TestTailAntigravityTranscriptSuppressesExistingAndPartialPlanner(t *testing
 	var offset int64
 	initialized := false
 	var callID uint64
-	pending := []string(nil)
+	pending := map[int]string{}
+	earlyResults := map[int]string{}
 	msgs := make(chan Message, 4)
-	if err := tailAntigravityTranscriptOnce(context.Background(), path, msgs, nil, &offset, &initialized, &callID, &pending); err != nil {
+	if err := tailAntigravityTranscriptOnce(context.Background(), path, msgs, nil, &offset, &initialized, &callID, &pending, &earlyResults); err != nil {
 		t.Fatal(err)
 	}
 	appendAntigravityTranscriptRecord(t, path, map[string]any{
 		"type": "PLANNER_RESPONSE", "source": "MODEL", "status": "RUNNING",
 		"tool_calls": []map[string]any{{"name": "partial", "args": map[string]any{}}},
 	})
-	if err := tailAntigravityTranscriptOnce(context.Background(), path, msgs, nil, &offset, &initialized, &callID, &pending); err != nil {
+	if err := tailAntigravityTranscriptOnce(context.Background(), path, msgs, nil, &offset, &initialized, &callID, &pending, &earlyResults); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -100,10 +102,11 @@ func TestTailAntigravityTranscriptMissingPathIsNoOp(t *testing.T) {
 	var offset int64
 	initialized := false
 	var callID uint64
-	pending := []string(nil)
+	pending := map[int]string{}
+	earlyResults := map[int]string{}
 	msgs := make(chan Message, 1)
 	path := filepath.Join(t.TempDir(), "missing", "transcript.jsonl")
-	if err := tailAntigravityTranscriptOnce(context.Background(), path, msgs, nil, &offset, &initialized, &callID, &pending); err != nil {
+	if err := tailAntigravityTranscriptOnce(context.Background(), path, msgs, nil, &offset, &initialized, &callID, &pending, &earlyResults); err != nil {
 		t.Fatal(err)
 	}
 	if !initialized || offset != 0 {
@@ -113,6 +116,58 @@ func TestTailAntigravityTranscriptMissingPathIsNoOp(t *testing.T) {
 	case msg := <-msgs:
 		t.Fatalf("unexpected message: %+v", msg)
 	default:
+	}
+}
+
+func TestTailAntigravityTranscriptMatchesOutOfOrderSteps(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "transcript.jsonl")
+	msgs := make(chan Message, 8)
+	var offset int64
+	initialized := false
+	var callID uint64
+	pending := map[int]string{}
+	earlyResults := map[int]string{}
+	read := func() {
+		t.Helper()
+		if err := tailAntigravityTranscriptOnce(context.Background(), path, msgs, nil, &offset, &initialized, &callID, &pending, &earlyResults); err != nil {
+			t.Fatal(err)
+		}
+	}
+	appendAntigravityTranscriptRecord(t, path, map[string]any{"type": "USER_INPUT"})
+	read()
+	appendAntigravityTranscriptRecord(t, path, map[string]any{
+		"type": "PLANNER_RESPONSE", "source": "MODEL", "status": "DONE", "step_index": 2,
+		"tool_calls": []map[string]any{{"name": "first"}},
+	})
+	read()
+	first := <-msgs
+	appendAntigravityTranscriptRecord(t, path, map[string]any{"type": "RUN_COMMAND", "source": "MODEL", "step_index": 3, "content": "first output"})
+	read()
+	firstResult := <-msgs
+	if firstResult.CallID != first.CallID {
+		t.Fatalf("first result attached to %q, want %q", firstResult.CallID, first.CallID)
+	}
+	appendAntigravityTranscriptRecord(t, path, map[string]any{"type": "RUN_COMMAND", "source": "MODEL", "step_index": 6, "content": "early output"})
+	read()
+	appendAntigravityTranscriptRecord(t, path, map[string]any{
+		"type": "PLANNER_RESPONSE", "source": "MODEL", "status": "DONE", "step_index": 5,
+		"tool_calls": []map[string]any{{"name": "early"}, {"name": "later"}},
+	})
+	read()
+	early := <-msgs
+	earlyResult := <-msgs
+	later := <-msgs
+	if early.Tool != "early" || earlyResult.CallID != early.CallID || earlyResult.Output != "early output" || later.Tool != "later" {
+		t.Fatalf("unexpected early reconciliation: %+v, %+v, %+v", early, earlyResult, later)
+	}
+	appendAntigravityTranscriptRecord(t, path, map[string]any{"type": "RUN_COMMAND", "source": "MODEL", "step_index": 7, "content": "later output"})
+	read()
+	laterResult := <-msgs
+	if laterResult.CallID != later.CallID {
+		t.Fatalf("later result attached to %q, want %q", laterResult.CallID, later.CallID)
+	}
+	if len(pending) != 0 || len(earlyResults) != 0 {
+		t.Fatalf("unmatched state remains: pending=%v early=%v", pending, earlyResults)
 	}
 }
 
