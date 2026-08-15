@@ -265,7 +265,9 @@ func (b *opencodeBackend) Execute(ctx context.Context, prompt string, opts ExecO
 		} else if runCtx.Err() == context.Canceled {
 			scanResult.status = "aborted"
 			scanResult.errMsg = "execution cancelled"
-		} else if exitErr != nil && scanResult.status == "completed" {
+		} else if exitErr != nil && scanResult.status == "completed" && !scanResult.sawTerminalSignal {
+			// A non-zero exit only demotes a completed run when no terminal
+			// signal proves that the run finished successfully.
 			scanResult.status = "failed"
 			scanResult.errMsg = fmt.Sprintf("opencode exited with error: %v", exitErr)
 		} else if exitErr != nil && scanResult.noTerminalSignal {
