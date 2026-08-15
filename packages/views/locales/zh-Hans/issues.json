@@ -485,6 +485,7 @@
     "cancel_failed": "取消 task 失败"
   },
   "execution_log": {
+    "history": "历史运行",
     "section": "执行日志",
     "show_past": "显示历史运行（{{count}}）",
     "hide_past": "隐藏历史运行（{{count}}）",

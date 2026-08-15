@@ -485,6 +485,7 @@
     "cancel_failed": "작업을 취소하지 못했습니다"
   },
   "execution_log": {
+    "history": "이전 실행",
     "section": "실행 로그",
     "show_past": "이전 실행 보기 ({{count}})",
     "hide_past": "이전 실행 숨기기 ({{count}})",

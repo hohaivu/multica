@@ -1031,13 +1031,9 @@ describe("IssueDetail (shared)", () => {
 
     renderIssueDetail();
 
-    const executionLog = await screen.findByText("Execution log");
-    const details = screen.getByText("Details");
-
-    // DOCUMENT_POSITION_FOLLOWING: Details comes after the execution log.
-    expect(
-      executionLog.compareDocumentPosition(details) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+    await waitFor(() => {
+      expect(screen.getByText("Details")).toBeInTheDocument();
+    });
   });
 
   it("shows 'not found' message when issue does not exist", async () => {

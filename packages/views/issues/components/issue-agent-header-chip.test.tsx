@@ -76,6 +76,10 @@ vi.mock("@multica/ui/components/ui/popover", async () => {
 });
 
 vi.mock("./execution-log-section", () => ({
+  isActiveTask: (task: AgentTask) =>
+    ["queued", "dispatched", "waiting_local_directory", "running"].includes(task.status),
+  sortPastTasks: (tasks: AgentTask[]) =>
+    tasks.filter((task) => ["completed", "failed", "cancelled"].includes(task.status)),
   ActiveTaskRow: ({
     task,
     onTranscriptOpenChange,
@@ -95,6 +99,7 @@ vi.mock("./execution-log-section", () => ({
       </button>
     </div>
   ),
+  PastTaskRow: ({ task }: { task: AgentTask }) => <div data-testid="past-task-row">{task.id}</div>,
 }));
 
 vi.mock("../../common/task-transcript/agent-transcript-dialog", () => ({
@@ -336,6 +341,6 @@ describe("IssueAgentHeaderChip", () => {
 
     renderWithI18n(<IssueAgentHeaderChip issueId="issue-1" />);
 
-    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.queryAllByRole("button", { name: "Historical runs" })).toHaveLength(2);
   });
 });

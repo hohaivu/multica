@@ -507,6 +507,7 @@
     "cancel_failed": "Failed to cancel task"
   },
   "execution_log": {
+    "history": "Historical runs",
     "section": "Execution log",
     "show_past": "Show past runs ({{count}})",
     "hide_past": "Hide past runs ({{count}})",

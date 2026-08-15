@@ -485,6 +485,7 @@
     "cancel_failed": "作業をキャンセルできませんでした"
   },
   "execution_log": {
+    "history": "過去の実行",
     "section": "実行ログ",
     "show_past": "過去の実行を表示 ({{count}})",
     "hide_past": "過去の実行を非表示 ({{count}})",

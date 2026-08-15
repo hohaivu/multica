@@ -2338,7 +2338,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           own token spend, with the issue total on the section header.
           Self-contained; owns its own collapse state and WS subscriptions.
           Hides itself when there are no runs to show. */}
-      <ExecutionLogSection issueId={id} identifier={issue.identifier} />
+      <ExecutionLogSection issueId={id} identifier={issue.identifier} showPast={false} />
 
       {/* Details — creator and timestamps. Sits below the execution log
           because it is the least-read block in the sidebar: the values
@@ -2645,7 +2645,13 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
             of the scroll: below `md` the composer is not pinned (see
             `useStickyComposer`), so it lands here — right where the launcher
             floats — once the reader scrolls to the bottom. */}
-        <div className="mx-auto w-full max-w-4xl px-3 py-6 max-md:pb-chat-launcher md:px-8 md:py-8">
+        <div
+          className={cn(
+            "mx-auto w-full px-3 py-6 max-md:pb-chat-launcher md:px-8 md:py-8",
+            sidebarOpen ? "max-w-4xl" : "max-w-6xl",
+          )}
+          data-issue-detail-content
+        >
           {titleLazy.active && (
             <div className={titleLazy.ready ? undefined : "hidden"}>
               <TitleEditor
