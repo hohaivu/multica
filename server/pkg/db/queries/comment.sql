@@ -391,6 +391,16 @@ WHERE id = $1;
 SELECT * FROM comment
 WHERE id = $1 AND workspace_id = $2;
 
+-- name: LockCommentInWorkspace :one
+SELECT * FROM comment
+WHERE id = $1 AND workspace_id = $2
+FOR UPDATE;
+
+-- name: UpdateCommentMetadata :one
+UPDATE comment SET metadata = $3, updated_at = now()
+WHERE id = $1 AND workspace_id = $2
+RETURNING *;
+
 -- name: GetThreadRoot :one
 -- Returns the thread-root comment for @comment_id by walking parent_id up to
 -- the row whose parent_id IS NULL. For a root comment it returns that comment

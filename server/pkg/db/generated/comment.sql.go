@@ -1318,6 +1318,41 @@ func (q *Queries) ListThreadCommentsForIssuePaged(ctx context.Context, arg ListT
 	return items, nil
 }
 
+const lockCommentInWorkspace = `-- name: LockCommentInWorkspace :one
+SELECT id, issue_id, author_type, author_id, content, type, created_at, updated_at, parent_id, workspace_id, resolved_at, resolved_by_type, resolved_by_id, source_task_id, quick_action_id, metadata FROM comment
+WHERE id = $1 AND workspace_id = $2
+FOR UPDATE
+`
+
+type LockCommentInWorkspaceParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) LockCommentInWorkspace(ctx context.Context, arg LockCommentInWorkspaceParams) (Comment, error) {
+	row := q.db.QueryRow(ctx, lockCommentInWorkspace, arg.ID, arg.WorkspaceID)
+	var i Comment
+	err := row.Scan(
+		&i.ID,
+		&i.IssueID,
+		&i.AuthorType,
+		&i.AuthorID,
+		&i.Content,
+		&i.Type,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ParentID,
+		&i.WorkspaceID,
+		&i.ResolvedAt,
+		&i.ResolvedByType,
+		&i.ResolvedByID,
+		&i.SourceTaskID,
+		&i.QuickActionID,
+		&i.Metadata,
+	)
+	return i, err
+}
+
 const resolveComment = `-- name: ResolveComment :one
 UPDATE comment SET
     resolved_at = COALESCE(resolved_at, now()),
@@ -1412,6 +1447,42 @@ type UpdateCommentParams struct {
 
 func (q *Queries) UpdateComment(ctx context.Context, arg UpdateCommentParams) (Comment, error) {
 	row := q.db.QueryRow(ctx, updateComment, arg.ID, arg.Content, arg.SourceTaskID)
+	var i Comment
+	err := row.Scan(
+		&i.ID,
+		&i.IssueID,
+		&i.AuthorType,
+		&i.AuthorID,
+		&i.Content,
+		&i.Type,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ParentID,
+		&i.WorkspaceID,
+		&i.ResolvedAt,
+		&i.ResolvedByType,
+		&i.ResolvedByID,
+		&i.SourceTaskID,
+		&i.QuickActionID,
+		&i.Metadata,
+	)
+	return i, err
+}
+
+const updateCommentMetadata = `-- name: UpdateCommentMetadata :one
+UPDATE comment SET metadata = $3, updated_at = now()
+WHERE id = $1 AND workspace_id = $2
+RETURNING id, issue_id, author_type, author_id, content, type, created_at, updated_at, parent_id, workspace_id, resolved_at, resolved_by_type, resolved_by_id, source_task_id, quick_action_id, metadata
+`
+
+type UpdateCommentMetadataParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	Metadata    []byte      `json:"metadata"`
+}
+
+func (q *Queries) UpdateCommentMetadata(ctx context.Context, arg UpdateCommentMetadataParams) (Comment, error) {
+	row := q.db.QueryRow(ctx, updateCommentMetadata, arg.ID, arg.WorkspaceID, arg.Metadata)
 	var i Comment
 	err := row.Scan(
 		&i.ID,

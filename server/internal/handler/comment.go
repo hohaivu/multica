@@ -1754,11 +1754,15 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "metadata must be a JSON object")
 		return
 	}
-	for key, value := range metadata {
-		if key != "ask_user_question" || bytes.IndexByte(value, 0) >= 0 {
+	for key := range metadata {
+		if key != "ask_user_question" {
 			writeError(w, http.StatusBadRequest, "metadata contains an unsupported or invalid field")
 			return
 		}
+	}
+	if !json.Valid(req.Metadata) || strings.ContainsRune(string(req.Metadata), '\x00') {
+		writeError(w, http.StatusBadRequest, "metadata contains invalid JSON")
+		return
 	}
 	if len(req.Metadata) > 8192 {
 		writeError(w, http.StatusBadRequest, "metadata must be no larger than 8192 bytes")
