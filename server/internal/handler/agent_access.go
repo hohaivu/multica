@@ -300,14 +300,16 @@ func (h *Handler) autopilotDelegationAuthorityFromComment(ctx context.Context, i
 }
 
 // commentSourceTaskIDForIssue returns the agent's currently-executing task (from
-// the X-Task-ID header) when it is running on the given issue, else an invalid
-// UUID. This is the exact issue-scoped lineage CreateComment stamps onto
-// source_task_id; a cross-issue (or missing) task yields invalid so the persisted
-// lineage — and every authority/originator resolution that reads it — fails closed
-// (MUL-4857).
+// the X-Task-ID header) when it is running on the given issue, OR when it is
+// bound to no issue at all (a chat/direct task), else an invalid UUID. This is
+// the exact lineage CreateComment stamps onto source_task_id: a task belongs to
+// no issue has no cross-issue authority to borrow (MUL-4857), so its lineage is
+// safe to carry forward; a task running on a DIFFERENT issue is a genuine
+// cross-issue mismatch and yields invalid so the persisted lineage — and every
+// authority/originator resolution that reads it — fails closed.
 func (h *Handler) commentSourceTaskIDForIssue(r *http.Request, issue db.Issue) pgtype.UUID {
 	task, ok := h.taskFromRequestHeader(r)
-	if !ok || !task.IssueID.Valid || uuidToString(task.IssueID) != uuidToString(issue.ID) {
+	if !ok || (task.IssueID.Valid && uuidToString(task.IssueID) != uuidToString(issue.ID)) {
 		return pgtype.UUID{}
 	}
 	return task.ID
