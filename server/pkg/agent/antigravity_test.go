@@ -626,31 +626,36 @@ func TestAntigravityBackendStreamPreservesNewlines(t *testing.T) {
 		t.Fatalf("execute: %v", err)
 	}
 
-	result := <-session.Result
-	const want = "### Heading\n\n- item one\n- item two"
-	if result.Output != want {
-		t.Fatalf("result output = %q, want %q", result.Output, want)
-	}
+	select {
+	case result := <-session.Result:
+		const want = "### Heading\n\n- item one\n- item two"
+		if result.Output != want {
+			t.Fatalf("result output = %q, want %q", result.Output, want)
+		}
 
-	var got strings.Builder
-	for {
-		select {
-		case msg, ok := <-session.Messages:
-			if !ok {
+		var got strings.Builder
+		// The fixture has no transcript tail, so Messages is intentionally not closed.
+		for {
+			select {
+			case msg, ok := <-session.Messages:
+				if !ok {
+					if got.String() != want {
+						t.Fatalf("concatenated message text = %q, want %q", got.String(), want)
+					}
+					return
+				}
+				if msg.Type == MessageText {
+					got.WriteString(msg.Content)
+				}
+			default:
 				if got.String() != want {
 					t.Fatalf("concatenated message text = %q, want %q", got.String(), want)
 				}
 				return
 			}
-			if msg.Type == MessageText {
-				got.WriteString(msg.Content)
-			}
-		default:
-			if got.String() != want {
-				t.Fatalf("concatenated message text = %q, want %q", got.String(), want)
-			}
-			return
 		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for result")
 	}
 }
 
