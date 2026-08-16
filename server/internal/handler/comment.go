@@ -44,7 +44,6 @@ type CommentResponse struct {
 	QuickActionID *string              `json:"quick_action_id,omitempty"`
 	Reactions     []ReactionResponse   `json:"reactions"`
 	Attachments   []AttachmentResponse `json:"attachments"`
-	Metadata      json.RawMessage      `json:"metadata"`
 	// Orientation stats — populated only on the roots_only path and omitted in
 	// every other mode, so the default response shape stays byte-identical for
 	// existing callers. ReplyCount is the number of descendants in the thread;
@@ -95,7 +94,6 @@ func commentToResponse(c db.Comment, reactions []ReactionResponse, attachments [
 	if attachments == nil {
 		attachments = []AttachmentResponse{}
 	}
-	metadata := normalizedCommentMetadata(c.Metadata)
 	return CommentResponse{
 		ID:             uuidToString(c.ID),
 		IssueID:        uuidToString(c.IssueID),
@@ -113,15 +111,7 @@ func commentToResponse(c db.Comment, reactions []ReactionResponse, attachments [
 		QuickActionID:  uuidToPtr(c.QuickActionID),
 		Reactions:      reactions,
 		Attachments:    attachments,
-		Metadata:       metadata,
 	}
-}
-
-func normalizedCommentMetadata(raw []byte) json.RawMessage {
-	if len(raw) == 0 || string(raw) == "null" {
-		return json.RawMessage(`{}`)
-	}
-	return json.RawMessage(raw)
 }
 
 // summaryContentRunes bounds comment content under summary=true. 200 runes is
@@ -1460,12 +1450,11 @@ func keepRootConnected(byID map[string]db.Comment) []db.Comment {
 }
 
 type CreateCommentRequest struct {
-	Content          string          `json:"content"`
-	Type             string          `json:"type"`
-	ParentID         *string         `json:"parent_id"`
-	AttachmentIDs    []string        `json:"attachment_ids"`
-	SuppressAgentIDs []string        `json:"suppress_agent_ids"`
-	Metadata         json.RawMessage `json:"metadata"`
+	Content          string   `json:"content"`
+	Type             string   `json:"type"`
+	ParentID         *string  `json:"parent_id"`
+	AttachmentIDs    []string `json:"attachment_ids"`
+	SuppressAgentIDs []string `json:"suppress_agent_ids"`
 }
 
 type CommentTriggerPreviewRequest struct {
@@ -1746,35 +1735,6 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	if req.Type == "" {
 		req.Type = "comment"
 	}
-	if len(req.Metadata) == 0 {
-		req.Metadata = json.RawMessage(`{}`)
-	}
-	var metadata map[string]json.RawMessage
-	if err := json.Unmarshal(req.Metadata, &metadata); err != nil || metadata == nil {
-		writeError(w, http.StatusBadRequest, "metadata must be a JSON object")
-		return
-	}
-	for key := range metadata {
-		if key != "ask_user_question" {
-			writeError(w, http.StatusBadRequest, "metadata contains an unsupported or invalid field")
-			return
-		}
-	}
-	if !json.Valid(req.Metadata) || strings.ContainsRune(string(req.Metadata), '\x00') {
-		writeError(w, http.StatusBadRequest, "metadata contains invalid JSON")
-		return
-	}
-	if len(req.Metadata) > 8192 {
-		writeError(w, http.StatusBadRequest, "metadata must be no larger than 8192 bytes")
-		return
-	}
-	authorType, authorID := h.resolveActor(r, userID, uuidToString(issue.WorkspaceID))
-	if _, ok := metadata["ask_user_question"]; ok {
-		if authorType != "agent" {
-			writeError(w, http.StatusForbidden, "structured questions require an agent author")
-			return
-		}
-	}
 	// Validate rather than letting the DB CHECK reject it: an unknown type
 	// previously surfaced as a 500 on a constraint violation, which reads as a
 	// server fault for what is plainly bad input. This is also the explicit
@@ -1813,6 +1773,7 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Determine author identity: agent (via X-Agent-ID header) or member.
+	authorType, authorID := h.resolveActor(r, userID, uuidToString(issue.WorkspaceID))
 
 	// Defense against resumed-session drift: when an agent posts from inside a
 	// comment-triggered task AND the comment is being posted on that same
@@ -1920,7 +1881,6 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		Type:         req.Type,
 		ParentID:     parentID,
 		SourceTaskID: sourceTaskID,
-		Metadata:     []byte(req.Metadata),
 	})
 	if err != nil {
 		slog.Warn("create comment failed", append(logger.RequestAttrs(r), "error", err, "issue_id", issueID)...)

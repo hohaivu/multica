@@ -1567,7 +1567,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Put("/", h.UpdateComment)
 				r.Delete("/", h.DeleteComment)
 				r.Post("/resolve", h.ResolveComment)
-				r.Post("/ask-user-question/answer", h.AnswerAskUserQuestion)
 				r.Delete("/resolve", h.UnresolveComment)
 				r.Post("/reactions", h.AddReaction)
 				r.Delete("/reactions", h.RemoveReaction)
