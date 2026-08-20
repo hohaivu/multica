@@ -989,9 +989,9 @@ LIMIT 1
 // when its session pointer is absent or deliberately retired.
 func (q *Queries) GetLastChatTaskWorkDir(ctx context.Context, chatSessionID pgtype.UUID) (pgtype.Text, error) {
 	row := q.db.QueryRow(ctx, getLastChatTaskWorkDir, chatSessionID)
-	var workDir pgtype.Text
-	err := row.Scan(&workDir)
-	return workDir, err
+	var work_dir pgtype.Text
+	err := row.Scan(&work_dir)
+	return work_dir, err
 }
 
 const getLatestAssistantChatMessageForSession = `-- name: GetLatestAssistantChatMessageForSession :one

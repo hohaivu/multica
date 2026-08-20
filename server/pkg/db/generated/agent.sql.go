@@ -4120,14 +4120,11 @@ type GetLastTaskSessionRow struct {
 // which never takes this path (see below).
 //
 // Manual rerun (TaskService.RerunIssue) does NOT take this path. The claim
-// handler branches on rerun_of_task_id FIRST and resolves the session/workdir
-// from that exact source task (so a parallel task on the same issue can't be
-// resumed by mistake), reusing the source workdir and resuming its session only
-// when the source failure is resume-safe. The rerun row still carries
-// force_fresh_session=true purely as a rollback-safe signal: an OLD claim
-// handler that predates the rerun_of_task_id branch falls back to this query,
-// and force_fresh_session=true makes it start clean instead of resuming the
-// wrong execution (MUL-4869).
+// handler branches on rerun_of_task_id FIRST and resolves the workdir from
+// that exact source task (so a parallel task on the same issue can't be reused
+// by mistake). force_fresh_session=true makes both old and new claim handlers
+// start a clean provider session; the new handler retains that exact workdir
+// (MUL-4869).
 //
 // Tasks that ended in a known "poisoned" terminal state are also excluded
 // here so even auto-retry does not inherit the bad session. The daemon
