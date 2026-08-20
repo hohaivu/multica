@@ -631,20 +631,22 @@ func TestBuildChatPromptTwoLayerChannelPolicy(t *testing.T) {
 		wantPhrases   []string
 	}{
 		{
-			name:        "direct chat opening: upload, no transcript read",
+			// The web-chat transcript pointer is keyed on PriorSessionID alone
+			// (TestBuildChatPromptWebHistoryOnColdStart), so a cold turn — opening
+			// or a follow-up whose prior run left no workdir — always gets it.
+			name:        "direct chat cold turn: upload, transcript read",
 			channelType: "",
 			wantUpload:  true,
-			wantHistory: false,
+			wantHistory: true,
 		},
 		{
 			// A web chat is not made file-less by a stray capability flag, and
-			// not made file-carrying by one either — it has its own branch. This
-			// opening turn still has no earlier transcript to recover.
+			// not made file-carrying by one either — it has its own branch.
 			name:          "direct chat opening ignores the channel capability",
 			channelType:   "",
 			deliversFiles: true,
 			wantUpload:    true,
-			wantHistory:   false,
+			wantHistory:   true,
 			wantPhrases:   []string{"appears as an attachment card below it"},
 		},
 		{
