@@ -34,21 +34,31 @@ const (
 	// runs while they are not executing a tool. OpenCode streams text and tool
 	// events incrementally, so a completely silent interval here covers both a
 	// missing first model token and a stalled response stream. The generic
-	// AgentIdleWatchdog remains the global enable/disable switch.
-	DefaultOpenCodeIdleWatchdog = 10 * time.Minute
+	// AgentIdleWatchdog remains the global enable/disable switch. Kept equal to
+	// AgentIdleWatchdog by default (the merge rule in runTask only takes this
+	// value when it is smaller) — lower it further with
+	// MULTICA_OPENCODE_IDLE_WATCHDOG if opencode stalls need faster detection
+	// than other providers.
+	DefaultOpenCodeIdleWatchdog = 3 * time.Minute
 	// DefaultAgentIdleWatchdog is the per-task safety net that force-stops a
 	// run when the backend has emitted no message for this long AND its
 	// message queue is empty. Backends like Claude Code can hang indefinitely
 	// on a stuck child process (e.g. `docker ps` against a frozen dockerd),
 	// in which case `cmd.Wait()` never returns. With no wall-clock cap
 	// (DefaultAgentTimeout = 0) such a run would otherwise sit at "running"
-	// forever, so this watchdog is its sole liveness net. The previous 5 min default
-	// killed legitimate long assistant outputs (e.g. RFC-length writeups)
-	// where the model streams a single message for many minutes without any
-	// daemon-visible activity — see MUL-2300. 30 min keeps the safety net for
-	// truly stuck runs (dockerd hang) while leaving headroom for long writes.
-	// Set MULTICA_AGENT_IDLE_WATCHDOG=0 to disable.
-	DefaultAgentIdleWatchdog = 30 * time.Minute
+	// forever, so this watchdog is its sole liveness net.
+	//
+	// A previous 5 min default was raised to 30 min (MUL-2300) because it
+	// killed legitimate long assistant outputs where the model streams a
+	// single message for many minutes with no daemon-visible activity. This
+	// was lowered back down to 3 min (VUH-132) now that idle_watchdog is an
+	// auto-retryable failure reason that resumes the same provider session:
+	// a false kill on a genuinely-long stream now costs one resumed retry
+	// instead of 10-15 min of silent, unrecoverable dead time. A run that
+	// still needs more per-message headroom than this can raise
+	// MULTICA_AGENT_IDLE_WATCHDOG; set it to 0 to disable the watchdog
+	// entirely.
+	DefaultAgentIdleWatchdog = 3 * time.Minute
 	// DefaultAgentToolWatchdog bounds how long a single tool call may stay in
 	// flight (tool_use emitted, no tool_result and no other message) before the
 	// idle watchdog force-stops the run. The idle watchdog ignores its normal

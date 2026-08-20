@@ -586,6 +586,17 @@ printf '%s\n' '{"event":"result","result":{"conversation_id":"a4083a09-b108-4540
 `
 }
 
+// fakeAgyRecoveredErrorStreamJSONScript mirrors VUH-136 / task e8a3d0ca: agy
+// latches a stale mid-run MCP tool-argument error into the terminal result
+// envelope's status/error, but response is non-empty because the agent
+// recovered and finished the turn.
+func fakeAgyRecoveredErrorStreamJSONScript() string {
+	return `#!/bin/sh
+[ "$1" = "models" ] && exit 0
+printf '%s\n' '{"event":"result","result":{"conversation_id":"b4083a09-b108-4540-9152-fba1347ebf64","status":"ERROR","response":"PR opened: https://example/pull/22","error":"Invalid arguments for tool find_nodes: Provide textValue or at least one filter.","duration_seconds":11.0,"usage":{"input_tokens":12,"output_tokens":3,"cache_read_tokens":7,"cache_write_tokens":2,"total_tokens":24}}}'
+`
+}
+
 func fakeAgyTerminalResultScript(status string) string {
 	return fmt.Sprintf(`#!/bin/sh
 [ "$1" = "models" ] && exit 0
@@ -808,6 +819,36 @@ func TestAntigravityBackendReportsUsageOnStructuredFailure(t *testing.T) {
 	result := <-session.Result
 	if result.Status != "failed" || result.Error != "provider failed" {
 		t.Fatalf("result = %+v", result)
+	}
+	want := TokenUsage{InputTokens: 12, OutputTokens: 3, CacheReadTokens: 7, CacheWriteTokens: 2}
+	if got := result.Usage["Gemini 3.1 Pro"]; got != want {
+		t.Fatalf("usage = %+v, want %+v", got, want)
+	}
+}
+
+func TestAntigravityBackendKeepsCompletedWhenErrorStatusCarriesResponse(t *testing.T) {
+	t.Parallel()
+
+	fakePath := filepath.Join(t.TempDir(), "agy")
+	writeTestExecutable(t, fakePath, []byte(fakeAgyRecoveredErrorStreamJSONScript()))
+	backend, err := New("antigravity", Config{ExecutablePath: fakePath, Logger: quietAntigravityLogger()})
+	if err != nil {
+		t.Fatalf("new antigravity backend: %v", err)
+	}
+	session, err := backend.Execute(context.Background(), "prompt-ignored", ExecOptions{Model: "Gemini 3.1 Pro"})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	go func() {
+		for range session.Messages {
+		}
+	}()
+	result := <-session.Result
+	if result.Status != "completed" || result.Error != "" {
+		t.Fatalf("result = %+v", result)
+	}
+	if result.Output != "PR opened: https://example/pull/22" {
+		t.Fatalf("output = %q", result.Output)
 	}
 	want := TokenUsage{InputTokens: 12, OutputTokens: 3, CacheReadTokens: 7, CacheWriteTokens: 2}
 	if got := result.Usage["Gemini 3.1 Pro"]; got != want {

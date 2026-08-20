@@ -249,10 +249,21 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 				antigravityPrintTimeout(timeout),
 			)
 		} else if status := antigravityResultStatus(structuredStatus); status != "" && status != "completed" {
-			finalStatus = status
-			finalError = structuredError
-			if finalError == "" {
-				finalError = fmt.Sprintf("agy result status: %s", structuredStatus)
+			if status == "failed" && strings.TrimSpace(structuredOutput) != "" {
+				// agy can latch the last tool error it saw (e.g. an MCP argument
+				// validation the agent already read the schema and retried past)
+				// into the terminal result envelope, while still returning the
+				// finished response. A real terminal failure comes back with an
+				// empty response, so treat this as completed rather than burning
+				// a run that otherwise finished its work (VUH-136 / task e8a3d0ca).
+				b.cfg.Logger.Warn("agy reported a failure status alongside a completed response; treating as completed",
+					"status", structuredStatus, "error", structuredError)
+			} else {
+				finalStatus = status
+				finalError = structuredError
+				if finalError == "" {
+					finalError = fmt.Sprintf("agy result status: %s", structuredStatus)
+				}
 			}
 		} else if providerErr := antigravityProviderError(logPath); finalStatus == "completed" && providerErr != "" {
 			// agy can also surface terminal model/provider failures only in the

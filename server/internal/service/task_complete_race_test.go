@@ -258,6 +258,10 @@ func TestTaskFailureClassifiers(t *testing.T) {
 		// resume-safe so the retry continues the truncated conversation.
 		{reason: "agent_error.provider_network", wantType: "agent_error", wantResumeOK: true, wantRetry: true},
 		{reason: "runtime_recovery", wantType: "runtime", wantResumeOK: true, wantRetry: true},
+		// Daemon idle watchdog force-stop (VUH-132): retryable and resume-safe,
+		// same treatment as provider_network — the run stalled, it didn't poison
+		// the conversation.
+		{reason: "idle_watchdog", wantType: "agent_error", wantResumeOK: true, wantRetry: true},
 		{reason: "iteration_limit", wantType: "agent_output", wantResumeOK: false, wantRetry: false},
 		{reason: "api_invalid_request", wantType: "agent_error", wantResumeOK: false, wantRetry: false},
 		{reason: "agent_error.context_overflow", wantType: "agent_error", wantResumeOK: false, wantRetry: false},

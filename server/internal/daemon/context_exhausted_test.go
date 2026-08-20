@@ -66,7 +66,7 @@ func TestContextExhaustionClassifiesRegardlessOfToolUse(t *testing.T) {
 // documents why it should not be there.
 func retryableFromDaemonPerspective(reason string) bool {
 	switch reason {
-	case "runtime_offline", "runtime_recovery", "timeout", "codex_semantic_inactivity",
+	case "runtime_offline", "runtime_recovery", "timeout", "codex_semantic_inactivity", "idle_watchdog",
 		string(taskfailure.ReasonAgentProviderNetwork),
 		string(taskfailure.ReasonSkillBundleUnavailable):
 		return true

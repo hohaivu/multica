@@ -1853,6 +1853,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// Squad leader evaluation (writes to activity_log)
 			r.Post("/api/issues/{id}/squad-evaluated", h.RecordSquadLeaderEvaluation)
 
+			// Agent self-reported blocker (fails the caller's own running task)
+			r.Post("/api/tasks/blocked", h.ReportTaskBlocked)
+
 			// Autopilots
 			r.Route("/api/autopilots", func(r chi.Router) {
 				r.Get("/", h.ListAutopilots)

@@ -331,6 +331,7 @@ func writeRepositories(b *strings.Builder, ctx TaskContextForEnv) {
 	}
 	b.WriteString("## Repositories\n\n")
 	b.WriteString("Available in this workspace — `multica repo checkout <url> [--ref <branch-or-sha>]` to fetch (creates a repository checkout on a dedicated branch).\n\n")
+	b.WriteString("Your process working directory **is** your task workdir, and `multica repo checkout` prints the checkout path — use relative paths (`./repo-name`) or that printed path. Never retype or reconstruct an absolute workdir path from memory: a `NotFound` on a hand-built path is your own typo, not a vanished checkout (VUH-140). `$MULTICA_TASK_WORKDIR` holds the absolute path if you need it.\n\n")
 	for _, repo := range ctx.Repos {
 		if repo.Description != "" {
 			fmt.Fprintf(b, "- %s — %s\n", repo.URL, repo.Description)
@@ -611,7 +612,7 @@ func writeWorkflowIssue(b *strings.Builder, ctx TaskContextForEnv) {
 	b.WriteString("- The moment you know this turn advances what the issue itself asks for — usually right after reading it — set `in_progress`: the board should show the issue being worked while you work, not only after.\n")
 	b.WriteString("- You delivered what the issue itself asks for and it awaits acceptance → `in_review`. Delivering an issue assigned to you — including a sub-issue in a chain or stage — always lands here; stage barriers and parent notifications depend on that signal. `done` stays human.\n")
 	b.WriteString("- The issue's work continues beyond this turn — you dispatched sub-issues, or delivered one part with more underway → `in_progress`.\n")
-	b.WriteString("- You cannot proceed without something you are missing → `blocked`, and post a comment explaining the blocker unless your Agent Identity forbids issue comments.\n")
+	b.WriteString("- You cannot proceed without something you are missing → `blocked`, and post a comment explaining the blocker unless your Agent Identity forbids issue comments. Also run `multica task blocked --reason \"...\"` so this run is recorded as blocked rather than completed.\n")
 	if ctx.IsSquadLeader {
 		b.WriteString("- Squad leader: dispatching members is not delivery — a dispatch turn leaves the parent `in_progress`, and it moves to `in_review` only on the later turn (a member update or stage-barrier re-trigger) where you confirm the overall goal is met.\n")
 	}
@@ -671,6 +672,7 @@ func writeMentions(b *strings.Builder) {
 	b.WriteString("- `[Project Name](mention://project/<project-id>)` — clickable link (no side effect)\n")
 	b.WriteString("- `[@Name](mention://member/<user-id>)` — **notifies a human**\n")
 	b.WriteString("- `[@Name](mention://agent/<agent-id>)` — **enqueues a new run for that agent**\n\n")
+	b.WriteString("A bare `@name` with no `mention://` link is inert text: it notifies nobody and enqueues nothing. If you mean to escalate or delegate, the full link form is the only thing that does it — if you don't, do not write `@name` at all.\n\n")
 	// No prescriptive default here (MUL-6417): the mention syntax hides its
 	// semantics — it reads like a free social gesture but is a spawn/notify
 	// operation — so what this paragraph must supply is the facts that

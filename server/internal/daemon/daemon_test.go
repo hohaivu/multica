@@ -584,6 +584,33 @@ func TestTaskMulticaEnvironmentIncludesPrivateConfigRoot(t *testing.T) {
 	}
 }
 
+func TestAgentLocaleDefault(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		lang       string
+		lcAll      string
+		wantLocale string
+		wantOK     bool
+	}{
+		{name: "both empty", lang: "", lcAll: "", wantLocale: "en_US.UTF-8", wantOK: true},
+		{name: "LANG set", lang: "zh_CN.UTF-8", lcAll: "", wantOK: false},
+		{name: "LC_ALL set only", lang: "", lcAll: "en_US.UTF-8", wantOK: false},
+		{name: "whitespace-only LANG", lang: "   ", lcAll: "", wantLocale: "en_US.UTF-8", wantOK: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			locale, ok := agentLocaleDefault(tt.lang, tt.lcAll)
+			if ok != tt.wantOK || (ok && locale != tt.wantLocale) {
+				t.Fatalf("agentLocaleDefault(%q, %q) = (%q, %v), want (%q, %v)", tt.lang, tt.lcAll, locale, ok, tt.wantLocale, tt.wantOK)
+			}
+		})
+	}
+}
+
 // When `brew --prefix` is unavailable but the executable path is under a
 // known Cellar root, triggerRestart must recover the prefix from the
 // known-prefix list and target <prefix>/bin/multica.
@@ -3248,6 +3275,29 @@ func (b idleWatchdogBackend) Execute(_ context.Context, _ string, _ agent.ExecOp
 	// Deliberately do NOT close msgCh and never write to resCh — this models
 	// a backend whose subprocess is hung and will never naturally complete.
 	return &agent.Session{Messages: msgCh, Result: resCh}, nil
+}
+
+func TestIdleWatchdogTickInterval(t *testing.T) {
+	cases := []struct {
+		window time.Duration
+		want   time.Duration
+	}{
+		{window: 50 * time.Millisecond, want: 25 * time.Millisecond},
+		{window: 500 * time.Millisecond, want: 250 * time.Millisecond},
+		// Below 1min, window/2 applies uncapped.
+		{window: 59 * time.Second, want: 29500 * time.Millisecond},
+		// At/above 1min, capped at 30s regardless of window size — this is
+		// what keeps overshoot bounded on the 3min default (VUH-132).
+		{window: time.Minute, want: 30 * time.Second},
+		{window: 3 * time.Minute, want: 30 * time.Second},
+		{window: 10 * time.Minute, want: 30 * time.Second},
+		{window: 30 * time.Minute, want: 30 * time.Second},
+	}
+	for _, tc := range cases {
+		if got := idleWatchdogTickInterval(tc.window); got != tc.want {
+			t.Errorf("idleWatchdogTickInterval(%s) = %s, want %s", tc.window, got, tc.want)
+		}
+	}
 }
 
 func TestExecuteAndDrain_IdleWatchdog_FiresOnInactivity(t *testing.T) {

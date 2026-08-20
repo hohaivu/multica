@@ -70,6 +70,7 @@ const (
 	taskSlotCapacityBackoff  = 5 * time.Second
 	repoCheckoutModeEnv      = "MULTICA_REPO_CHECKOUT_MODE"
 	repoCheckoutModeIsolated = "isolated"
+	taskWorkDirEnv           = "MULTICA_TASK_WORKDIR"
 	// defaultTaskPrepareTimeout is a hard liveness bound for everything after
 	// claim and before StartTask succeeds: runtime resolution, skill bundles,
 	// execution-environment setup, and the StartTask request itself. It is
@@ -164,6 +165,17 @@ func taskMulticaEnvironment(task Task, agentName, token, configRoot, workspacesR
 		"TMP":                  tempDir,
 		"TEMP":                 tempDir,
 	}
+}
+
+// agentLocaleDefault names the LANG to inject when the daemon inherited no
+// locale. macOS launchd gives Desktop-launched daemons none, which makes Ruby
+// read Dir.pwd as ASCII-8BIT and kills CocoaPods before it opens the Podfile
+// (VUH-129). A locale the daemon really did inherit always wins.
+func agentLocaleDefault(lang, lcAll string) (string, bool) {
+	if strings.TrimSpace(lang) != "" || strings.TrimSpace(lcAll) != "" {
+		return "", false
+	}
+	return "en_US.UTF-8", true
 }
 
 // taskRunner executes a single agent task and returns the result.
@@ -6838,6 +6850,12 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		return TaskResult{}, err
 	}
 	agentEnv := taskMulticaEnvironment(task, agentName, agentToken, env.MulticaConfigRoot, d.cfg.WorkspacesRoot, d.cfg.ServerBaseURL, d.cfg.HealthPort, slot, taskTempDir)
+	// MULTICA_TASK_WORKDIR is the task workdir as an absolute path. The workdir is
+	// otherwise conveyed only as the process cwd, so an agent needing it in absolute
+	// form has to retype it from conversation history — which a context compaction
+	// erases, and a mistyped path returns NotFound and reads as "my checkout
+	// disappeared" (VUH-140).
+	agentEnv[taskWorkDirEnv] = env.WorkDir
 	if checkoutMode := repoCheckoutModeFor(provider, runtime.GOOS); checkoutMode != "" {
 		agentEnv[repoCheckoutModeEnv] = checkoutMode
 	}
@@ -6868,6 +6886,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if selfBin, err := resolveSelfExecutable(); err == nil {
 		binDir := filepath.Dir(selfBin)
 		agentEnv["PATH"] = binDir + string(os.PathListSeparator) + os.Getenv("PATH")
+	}
+	if locale, ok := agentLocaleDefault(os.Getenv("LANG"), os.Getenv("LC_ALL")); ok {
+		agentEnv["LANG"] = locale
 	}
 	// Point Codex to the per-task CODEX_HOME so it discovers skills natively
 	// without polluting the system ~/.codex/skills/.
@@ -8067,14 +8088,26 @@ func idleWatchdogReason(window time.Duration) string {
 // Tick interval is window/2 (floored at 30 s in production, but the floor only
 // kicks in for windows >= 1 min so tests can pass tiny windows like 50 ms and
 // see the watchdog fire within a few ticks).
-func (d *Daemon) runIdleWatchdog(agentCtx context.Context, window, toolWindow time.Duration, lastActivityAt *atomic.Int64, inFlightTools *atomic.Int32, fired *atomic.Bool, firedThreshold *atomic.Int64, cancel context.CancelFunc, messages <-chan agent.Message, taskLog *slog.Logger, taskID string) {
+// idleWatchdogTickInterval picks how often runIdleWatchdog polls for
+// inactivity. window/2 keeps sub-minute windows (tests, per-run overrides)
+// responsive; capping at 30s once the window is a minute or more keeps the
+// overshoot small on longer windows — at an uncapped window/2, a 3min window
+// would only poll every 90s, so a stall could sit undetected for up to
+// window+45s past the intended budget (VUH-132 saw idle_for=10m58s against a
+// 10m window under the old window/2-only interval).
+func idleWatchdogTickInterval(window time.Duration) time.Duration {
 	interval := window / 2
-	if window >= time.Minute && interval < 30*time.Second {
+	if window >= time.Minute {
 		interval = 30 * time.Second
 	}
 	if interval <= 0 {
 		interval = window
 	}
+	return interval
+}
+
+func (d *Daemon) runIdleWatchdog(agentCtx context.Context, window, toolWindow time.Duration, lastActivityAt *atomic.Int64, inFlightTools *atomic.Int32, fired *atomic.Bool, firedThreshold *atomic.Int64, cancel context.CancelFunc, messages <-chan agent.Message, taskLog *slog.Logger, taskID string) {
+	interval := idleWatchdogTickInterval(window)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {

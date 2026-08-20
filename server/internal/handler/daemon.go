@@ -4393,6 +4393,49 @@ func (h *Handler) failTask(w http.ResponseWriter, r *http.Request, taskID, works
 	writeJSON(w, http.StatusOK, taskToResponse(*task, workspaceID))
 }
 
+// ReportTaskBlocked lets a running agent self-report a genuine environment
+// or permission blocker, via `multica task blocked --reason`. Unlike the
+// daemon-authenticated /api/daemon/tasks/{taskId}/fail above, this sits on
+// the general Auth-protected surface and is called with the task's own
+// mat_ token; the caller identifies itself only via the X-Task-ID header
+// that auth middleware stamped from that token, never a URL param.
+//
+// Before this existed, a blocked run had no structured way to say so, and
+// fell through to the daemon reporting agent_error (or, worse, completed) —
+// which is exactly how VUH-140 read a 13-minute no-op run as success.
+func (h *Handler) ReportTaskBlocked(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if strings.TrimSpace(req.Reason) == "" {
+		writeError(w, http.StatusBadRequest, "reason is required")
+		return
+	}
+
+	taskID := r.Header.Get("X-Task-ID")
+	task, workspaceID, ok := h.requireDaemonTaskAccessWithWorkspace(w, r, taskID)
+	if !ok {
+		return
+	}
+
+	// Only the task's own agent may report its blocker — same resolveActor
+	// ownership check RecordSquadLeaderEvaluation uses for the squad leader.
+	actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
+	if actorType != "agent" || actorID != uuidToString(task.AgentID) {
+		writeError(w, http.StatusForbidden, "only the task's own agent can report a blocker")
+		return
+	}
+
+	h.failTask(w, r, taskID, workspaceID, TaskFailRequest{
+		Error:         req.Reason,
+		FailureReason: string(taskfailure.ReasonAgentBlocked),
+	})
+}
+
 // ---------------------------------------------------------------------------
 // Task Messages (live agent output)
 // ---------------------------------------------------------------------------

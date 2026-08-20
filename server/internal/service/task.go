@@ -4371,10 +4371,14 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 // that did download is already cached on disk — a retry resumes from there
 // instead of re-fetching the whole set (MUL-5370).
 var retryableReasons = map[string]bool{
-	string(taskfailure.ReasonRuntimeOffline):         true,
-	string(taskfailure.ReasonRuntimeRecovery):        true,
-	string(taskfailure.ReasonTimeout):                true,
-	"codex_semantic_inactivity":                      true,
+	string(taskfailure.ReasonRuntimeOffline):  true,
+	string(taskfailure.ReasonRuntimeRecovery): true,
+	string(taskfailure.ReasonTimeout):         true,
+	"codex_semantic_inactivity":               true,
+	// idle_watchdog is the daemon force-stopping a run whose backend went
+	// silent (VUH-132: a real stall, not a poisoned session) — retryable and
+	// resume-safe for the same reason as provider_network below.
+	"idle_watchdog": true,
 	string(taskfailure.ReasonAgentProviderNetwork):   true,
 	string(taskfailure.ReasonSkillBundleUnavailable): true,
 }

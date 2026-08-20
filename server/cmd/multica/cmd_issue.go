@@ -2025,6 +2025,10 @@ func runIssueCommentAdd(cmd *cobra.Command, args []string) error {
 	}
 	issueID := issueRef.ID
 
+	if err := guardBareMentions(ctx, client, content, "comment body"); err != nil {
+		return err
+	}
+
 	// Validate and read ALL attachments before uploading any. URLs are skipped
 	// with a warning — `--attachment` only accepts local file paths. Reading
 	// everything up front means a later invalid path (external / symlink escape
@@ -2151,7 +2155,7 @@ func runIssueRuns(cmd *cobra.Command, args []string) error {
 
 	actors := loadActorDisplayLookup(ctx, client)
 	fullID, _ := cmd.Flags().GetBool("full-id")
-	headers := []string{"ID", "AGENT", "STATUS", "STARTED", "COMPLETED", "ERROR"}
+	headers := []string{"ID", "AGENT", "STATUS", "STARTED", "COMPLETED", "FAILURE_REASON", "ERROR"}
 	rows := make([][]string, 0, len(runs))
 	for _, r := range runs {
 		started := strVal(r, "started_at")
@@ -2173,6 +2177,7 @@ func runIssueRuns(cmd *cobra.Command, args []string) error {
 			strVal(r, "status"),
 			started,
 			completed,
+			strVal(r, "failure_reason"),
 			errMsg,
 		})
 	}
