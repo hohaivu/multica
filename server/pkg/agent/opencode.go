@@ -266,7 +266,16 @@ func (b *opencodeBackend) Execute(ctx context.Context, prompt string, opts ExecO
 		} else if runCtx.Err() == context.Canceled {
 			scanResult.status = "aborted"
 			scanResult.errMsg = "execution cancelled"
-		} else if exitErr != nil && scanResult.status == "completed" {
+		} else if exitErr != nil && scanResult.status == "completed" && !scanResult.sawTerminalSignal {
+			// A non-zero exit only demotes a "completed" run when there is no
+			// positive evidence the run actually finished. OpenCode is a Bun
+			// binary that on Windows routinely crashes on process teardown with
+			// 0xc0000409 (STATUS_STACK_BUFFER_OVERRUN) AFTER emitting a full,
+			// clean event stream — so a run that reached a terminal signal
+			// (step_finish) must stay "completed" despite the crash-on-exit,
+			// mirroring the writeErr guard below (#5872). Runs that never
+			// signalled completion still fail here; genuine mid-run errors are
+			// already failed via the `error` event before this branch.
 			scanResult.status = "failed"
 			scanResult.errMsg = fmt.Sprintf("opencode exited with error: %v", exitErr)
 		} else if exitErr != nil && scanResult.noTerminalSignal {
@@ -346,6 +355,7 @@ type eventResult struct {
 // the accumulated result. This is the core scanner loop, extracted for testability.
 func (b *opencodeBackend) processEvents(r io.Reader, ch chan<- Message) eventResult {
 	var output strings.Builder
+	var reasoning strings.Builder
 	var sessionID string
 	var usage TokenUsage
 	finalStatus := "completed"
@@ -412,6 +422,8 @@ func (b *opencodeBackend) processEvents(r io.Reader, ch chan<- Message) eventRes
 			if event.Part.Text != "" {
 				stepProducedOutput = true
 			}
+		case "reasoning":
+			b.handleReasoningEvent(event, ch, &reasoning)
 		case "tool_use":
 			b.handleToolUseEvent(event, ch)
 			stepProducedOutput = true
@@ -484,10 +496,22 @@ func (b *opencodeBackend) processEvents(r io.Reader, ch chan<- Message) eventRes
 		}
 	}
 
+	// OpenCode reasoning models (e.g. hy3-free) stream their final answer as
+	// `reasoning` events and emit no `text` event. Capture those, and when a
+	// run produced no text output but did produce reasoning, promote the
+	// reasoning to the deliverable output so a completed run is not reported
+	// with an empty Result.Output.
+	finalOutput := strings.TrimSpace(output.String())
+	if finalOutput == "" {
+		if rb := strings.TrimSpace(reasoning.String()); rb != "" {
+			finalOutput = rb
+		}
+	}
+
 	return eventResult{
 		status:            finalStatus,
 		errMsg:            finalError,
-		output:            output.String(),
+		output:            finalOutput,
 		sessionID:         sessionID,
 		usage:             usage,
 		noTerminalSignal:  noTerminalSignal,
@@ -529,6 +553,20 @@ func (b *opencodeBackend) handleTextEvent(event opencodeEvent, ch chan<- Message
 	if text != "" {
 		output.WriteString(text)
 		trySend(ch, Message{Type: MessageText, Content: text})
+	}
+}
+
+// handleReasoningEvent captures `reasoning` events from opencode. Reasoning
+// models stream their thinking (and, for some backends, their entire answer)
+// here rather than in `text` events, carried in part.text like a text event.
+// We forward it as a thinking message for live visibility and accumulate it
+// so processEvents can promote it to the deliverable output when no text is
+// produced.
+func (b *opencodeBackend) handleReasoningEvent(event opencodeEvent, ch chan<- Message, reasoning *strings.Builder) {
+	text := event.Part.Text
+	if text != "" {
+		reasoning.WriteString(text)
+		trySend(ch, Message{Type: MessageThinking, Content: text})
 	}
 }
 
@@ -661,6 +699,7 @@ func extractToolOutput(output any) string {
 //
 //	"step_start"  — agent step begins
 //	"text"        — text output from agent (part.text)
+//	"reasoning"   — thinking/answer stream from reasoning models (part.text)
 //	"tool_use"    — tool invocation with call and result (part.tool, part.callID, part.state)
 //	"error"       — error from opencode (error.name, error.data.message)
 //	"step_finish" — agent step completes (includes token usage)
@@ -679,7 +718,10 @@ type opencodeEventPart struct {
 	SessionID string `json:"sessionID,omitempty"`
 	Type      string `json:"type,omitempty"`
 
-	// Text events
+	// Text events. Reasoning events (opencodeEvent.Type == "reasoning") carry
+	// their content here too — reasoning models stream their thinking, and
+	// for some backends their entire answer, this way rather than in a
+	// separate field.
 	Text string `json:"text,omitempty"`
 
 	// Tool use events

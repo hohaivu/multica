@@ -1185,6 +1185,92 @@ func TestOpencodeProcessEventsUsageOnlyFinalStepStaysCompleted(t *testing.T) {
 	}
 }
 
+// TestOpencodeProcessEventsReasoningOnlyRunPromotesReasoningToOutput is the
+// regression guard for #6999. OpenCode reasoning models (e.g. hy3-free)
+// stream their final answer as `reasoning` events and emit no `text` event.
+// Before the fix, `result.output` stayed empty even though the run
+// completed with real (billed) usage — the "completed but empty" symptom.
+func TestOpencodeProcessEventsReasoningOnlyRunPromotesReasoningToOutput(t *testing.T) {
+	t.Parallel()
+
+	b := &opencodeBackend{cfg: Config{Logger: slog.Default()}}
+	ch := make(chan Message, 256)
+
+	lines := strings.Join([]string{
+		`{"type":"step_start","timestamp":1000,"sessionID":"ses_reasoning","part":{"type":"step-start"}}`,
+		`{"type":"reasoning","timestamp":1001,"sessionID":"ses_reasoning","part":{"type":"reasoning","text":"thinking..."}}`,
+		`{"type":"step_finish","timestamp":1002,"sessionID":"ses_reasoning","part":{"type":"step-finish","reason":"stop","tokens":{"input":950,"output":0,"reasoning":82,"cache":{"write":0,"read":0}}}}`,
+	}, "\n")
+
+	result := b.processEvents(strings.NewReader(lines), ch)
+
+	if result.status != "completed" {
+		t.Errorf("status: got %q, want %q", result.status, "completed")
+	}
+	if result.output != "thinking..." {
+		t.Errorf("output: got %q, want the reasoning text promoted to output", result.output)
+	}
+
+	close(ch)
+}
+
+// TestOpencodeProcessEventsTextWinsOverReasoning asserts that promotion never
+// shadows a real text answer: when a run produces both, the deliverable
+// output is the text, not the reasoning that preceded it.
+func TestOpencodeProcessEventsTextWinsOverReasoning(t *testing.T) {
+	t.Parallel()
+
+	b := &opencodeBackend{cfg: Config{Logger: slog.Default()}}
+	ch := make(chan Message, 256)
+
+	lines := strings.Join([]string{
+		`{"type":"step_start","timestamp":1000,"sessionID":"ses_both","part":{"type":"step-start"}}`,
+		`{"type":"reasoning","timestamp":1001,"sessionID":"ses_both","part":{"type":"reasoning","text":"thinking..."}}`,
+		`{"type":"text","timestamp":1002,"sessionID":"ses_both","part":{"type":"text","text":"the answer"}}`,
+		`{"type":"step_finish","timestamp":1003,"sessionID":"ses_both","part":{"type":"step-finish","reason":"stop","tokens":{"input":950,"output":10,"cache":{"write":0,"read":0}}}}`,
+	}, "\n")
+
+	result := b.processEvents(strings.NewReader(lines), ch)
+
+	if result.status != "completed" {
+		t.Errorf("status: got %q, want %q", result.status, "completed")
+	}
+	if result.output != "the answer" {
+		t.Errorf("output: got %q, want the text output (reasoning must not shadow it)", result.output)
+	}
+
+	close(ch)
+}
+
+// TestOpencodeProcessEventsReasoningOnlyEmptyFinalStepFails pins the
+// reasoning-only shape of the #6522 dead-stream guard: a reasoning part
+// carries no tokens of its own, so a final step that emits one and then
+// closes with an all-zero token block is still the zero-round-trip shape and
+// must fail closed, not be rescued by the reasoning text alone.
+func TestOpencodeProcessEventsReasoningOnlyEmptyFinalStepFails(t *testing.T) {
+	t.Parallel()
+
+	b := &opencodeBackend{cfg: Config{Logger: slog.Default()}}
+	ch := make(chan Message, 256)
+
+	lines := strings.Join([]string{
+		`{"type":"step_start","timestamp":1000,"sessionID":"ses_void","part":{"type":"step-start"}}`,
+		`{"type":"reasoning","timestamp":1001,"sessionID":"ses_void","part":{"type":"reasoning","text":"thinking..."}}`,
+		`{"type":"step_finish","timestamp":1002,"sessionID":"ses_void","part":{"type":"step-finish","reason":"unknown","tokens":{"input":0,"output":0,"reasoning":0,"cache":{"write":0,"read":0}},"cost":0}}`,
+	}, "\n")
+
+	result := b.processEvents(strings.NewReader(lines), ch)
+
+	if result.status != "failed" {
+		t.Errorf("status: got %q, want %q (an all-zero final step must not complete the run)", result.status, "failed")
+	}
+	if !strings.HasPrefix(result.errMsg, "opencode stream ended") {
+		t.Errorf("errMsg: got %q, want the classifier's opencode stream-ended prefix", result.errMsg)
+	}
+
+	close(ch)
+}
+
 // ── Windows native-binary resolution tests ──
 
 // fakeStat returns a statFn that reports any path in `present` as existing
@@ -1858,4 +1944,59 @@ func equalStringSlice(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// fakeOpencodeCompletedThenCrashScript emits a full, clean event stream
+// (step_start -> text -> step_finish with usage) and then exits non-zero,
+// mimicking OpenCode's Bun binary crashing on process teardown (Windows
+// 0xc0000409) AFTER the run actually finished (#5872).
+func fakeOpencodeCompletedThenCrashScript() string {
+	return `#!/bin/sh
+cat > /dev/null
+printf '%s\n' '{"type":"step_start","timestamp":1000,"sessionID":"ses_x","part":{"type":"step-start"}}'
+printf '%s\n' '{"type":"text","timestamp":1001,"sessionID":"ses_x","part":{"type":"text","text":"All done."}}'
+printf '%s\n' '{"type":"step_finish","timestamp":1002,"sessionID":"ses_x","part":{"type":"step-finish","tokens":{"total":10,"input":8,"output":2}}}'
+exit 134
+`
+}
+
+// TestOpencodeBackendCompletedRunSurvivesCrashOnExit is the regression guard for
+// #5872: a run that reached a terminal signal (step_finish) must stay
+// "completed" even when the process exits non-zero on teardown — a crash-on-exit
+// after a clean stream is not a failed run.
+func TestOpencodeBackendCompletedRunSurvivesCrashOnExit(t *testing.T) {
+	t.Parallel()
+
+	fakePath := filepath.Join(t.TempDir(), "opencode")
+	writeTestExecutable(t, fakePath, []byte(fakeOpencodeCompletedThenCrashScript()))
+
+	backend, err := New("opencode", Config{ExecutablePath: fakePath, Logger: quietAntigravityLogger()})
+	if err != nil {
+		t.Fatalf("new opencode backend: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	session, err := backend.Execute(ctx, "do the thing", ExecOptions{})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	// Drain the message stream so the result goroutine can finish.
+	go func() {
+		for range session.Messages {
+		}
+	}()
+
+	select {
+	case result, ok := <-session.Result:
+		if !ok {
+			t.Fatal("result channel closed without a value")
+		}
+		if result.Status != "completed" {
+			t.Fatalf("status = %q, want \"completed\" — a run that reached step_finish must not be demoted by a crash-on-exit (#5872); error=%q", result.Status, result.Error)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for result")
+	}
 }
