@@ -3629,6 +3629,108 @@ func TestExecuteAndDrain_IdleWatchdog_FiresOnStuckInFlightTool(t *testing.T) {
 	}
 }
 
+// terminalOnlyToolBackend models opencode/deveco (providerReportsInFlightTools
+// == false): their `--format json` stream reports a tool only once it is
+// already terminal, so tool_use and tool_result always arrive back to back —
+// there is never a window where inFlightTools is non-zero. The backend goes
+// fully silent for toolSilence, as a real `flutter test` would run unobserved,
+// then reports the pair together and finishes.
+type terminalOnlyToolBackend struct {
+	toolSilence time.Duration
+}
+
+func (b terminalOnlyToolBackend) Execute(ctx context.Context, _ string, _ agent.ExecOptions) (*agent.Session, error) {
+	msgCh := make(chan agent.Message, 4)
+	resCh := make(chan agent.Result, 1)
+
+	go func() {
+		select {
+		case <-time.After(b.toolSilence):
+		case <-ctx.Done():
+			resCh <- agent.Result{Status: "aborted", Error: ctx.Err().Error()}
+			close(msgCh)
+			close(resCh)
+			return
+		}
+		msgCh <- agent.Message{Type: agent.MessageToolUse, Tool: "Bash", CallID: "call-1", Input: map[string]any{"cmd": "flutter test"}}
+		msgCh <- agent.Message{Type: agent.MessageToolResult, Tool: "Bash", CallID: "call-1", Output: "All tests passed"}
+		msgCh <- agent.Message{Type: agent.MessageText, Content: "done"}
+		close(msgCh)
+		resCh <- agent.Result{Status: "completed", Output: "done"}
+		close(resCh)
+	}()
+
+	return &agent.Session{Messages: msgCh, Result: resCh}, nil
+}
+
+// This is the VUH-140/VUH-144 regression: opencode ran `flutter test` /
+// `swiftc -O` (a real tool, just reported late) and the idle watchdog killed
+// the run at 3 minutes because it never saw a tool in flight.
+func TestExecuteAndDrain_IdleWatchdog_WidensForProviderWithoutInFlightToolReporting(t *testing.T) {
+	t.Parallel()
+
+	d := newTestDaemon(t)
+	// 50 ms idle window; the backend goes silent for ~4x that. Provider
+	// "opencode" must widen the silence budget to AgentToolWatchdog so this
+	// still completes instead of being force-stopped mid-"build".
+	d.cfg.AgentIdleWatchdog = 50 * time.Millisecond
+	d.cfg.AgentToolWatchdog = 1 * time.Second
+
+	result, _, err := d.executeAndDrain(
+		context.Background(),
+		terminalOnlyToolBackend{toolSilence: 200 * time.Millisecond},
+		"p",
+		agent.ExecOptions{Provider: "opencode"},
+		slog.Default(),
+		"t-opencode-widened",
+		"",
+		new(atomic.Int32),
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Status != "completed" {
+		t.Fatalf("opencode's terminal-only tool reporting must widen the idle window to AgentToolWatchdog; got status=%q (err=%q)", result.Status, result.Error)
+	}
+}
+
+// Regression guard for the fix above: a provider that reports in-flight tools
+// normally (the default) must NOT get the widened window just because it
+// stayed silent — inFlightTools is genuinely zero here, so this is exactly
+// the hang case the watchdog exists to catch, and it must still fire at the
+// narrow idle window.
+func TestExecuteAndDrain_IdleWatchdog_StillNarrowForNormalProviderDespiteSilentTool(t *testing.T) {
+	t.Parallel()
+
+	d := newTestDaemon(t)
+	d.cfg.AgentIdleWatchdog = 50 * time.Millisecond
+	d.cfg.AgentToolWatchdog = 1 * time.Second
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	start := time.Now()
+	result, _, err := d.executeAndDrain(
+		ctx,
+		terminalOnlyToolBackend{toolSilence: 200 * time.Millisecond},
+		"p",
+		agent.ExecOptions{},
+		slog.Default(),
+		"t-normal-narrow",
+		"",
+		new(atomic.Int32),
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Status != "idle_watchdog" {
+		t.Fatalf("expected status=idle_watchdog for a provider that reports in-flight tools normally, got %q (err=%q)", result.Status, result.Error)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("idle watchdog took too long to fire: %s (window=%s)", elapsed, d.cfg.AgentIdleWatchdog)
+	}
+}
+
 // tailIdleAfterToolBackend exercises the boundary case: a tool call completes,
 // and THEN the backend goes silent without ever finishing. After the
 // tool_result lands, in-flight count returns to zero and lastActivityAt is

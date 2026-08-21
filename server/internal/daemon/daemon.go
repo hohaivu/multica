@@ -5673,6 +5673,31 @@ func providerNeedsInlineSystemPrompt(provider string) bool {
 	}
 }
 
+// providerReportsInFlightTools reports whether the provider's event stream can
+// tell the idle watchdog that a tool call is still running. Most CLIs emit a
+// tool_use before the call starts and a separate tool_result once it ends, so
+// inFlightTools (executeAndDrain) is briefly non-zero and the watchdog grants
+// the larger AgentToolWatchdog budget for a slow build/install/test.
+//
+// opencode and deveco cannot: their `--format json` stream reports a tool part
+// only once it has already reached a terminal state (state.status is
+// "completed" or "error") — see handleToolUseEvent in opencode.go / deveco.go,
+// which sends MessageToolUse and MessageToolResult back to back for exactly
+// that reason. inFlightTools therefore never rises, tool_in_flight is always
+// false, and every tool call this backend runs is silently held to the
+// 3-minute idle window regardless of AgentToolWatchdog — the true root cause
+// behind VUH-140/VUH-144's idle_watchdog failures on a `flutter test` /
+// `swiftc -O` step. executeAndDrain widens the idle window itself for these
+// providers; see the call site.
+func providerReportsInFlightTools(provider string) bool {
+	switch provider {
+	case "opencode", "deveco":
+		return false
+	default:
+		return true
+	}
+}
+
 // gateResumeToReusedWorkdir clears the task's prior session unless this run
 // can actually reach the store the session lives in, and reports whether that
 // held. CLI backends key their session stores to the cwd (Claude Code looks
@@ -7100,6 +7125,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	execOpts := agent.ExecOptions{
 		Cwd:                        env.WorkDir,
 		Model:                      model,
+		Provider:                   provider,
 		ThreadName:                 deriveTaskThreadName(task),
 		Timeout:                    d.cfg.AgentTimeout,
 		SemanticInactivityTimeout:  d.cfg.CodexSemanticInactivityTimeout,
@@ -7770,6 +7796,23 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 	// the entire watchdog suite. Tool calls continue to use AgentToolWatchdog.
 	if idleWindow > 0 && opts.IdleWatchdogTimeout > 0 && opts.IdleWatchdogTimeout < idleWindow {
 		idleWindow = opts.IdleWatchdogTimeout
+	}
+	// ponytail: opencode/deveco report a tool part only once it is already
+	// terminal (providerReportsInFlightTools), so inFlightTools never rises
+	// and the in-flight branch below never applies AgentToolWatchdog for them
+	// — every tool call this backend runs would be held to the few-minute
+	// idle window instead, killing any build/install/test slower than that
+	// (VUH-140/VUH-144). Use the tool budget as the run's only silence budget
+	// until the backend consumes opencode's true event stream instead of its
+	// `--format json` CLI output (message.part.updated carries
+	// state.status=="running", which the CLI output never does).
+	if idleWindow > 0 && !providerReportsInFlightTools(opts.Provider) && d.cfg.AgentToolWatchdog > idleWindow {
+		taskLog.Debug("idle watchdog: widened to tool budget; provider cannot report in-flight tools",
+			"provider", opts.Provider,
+			"idle_window", idleWindow,
+			"tool_watchdog", d.cfg.AgentToolWatchdog,
+		)
+		idleWindow = d.cfg.AgentToolWatchdog
 	}
 	var idleWatchdogThreshold atomic.Int64
 	idleWatchdogThreshold.Store(int64(idleWindow))

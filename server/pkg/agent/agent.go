@@ -55,6 +55,12 @@ type ExecOptions struct {
 	// daemon-wide zero still disables the watchdog entirely, and an in-flight
 	// tool continues to use the separate tool watchdog budget.
 	IdleWatchdogTimeout time.Duration
+	// Provider is the backend's registry name (e.g. "opencode", "claude"). No
+	// backend needs to read this — it already knows what it is — this is
+	// bookkeeping for the daemon's own idle-watchdog decision
+	// (providerReportsInFlightTools), which needs the name alongside the
+	// Backend value it was given. Left empty by callers that don't care.
+	Provider string
 	// HandshakeTimeout bounds startup RPCs for providers with a long-lived
 	// protocol transport. It is currently consumed by Codex app-server;
 	// zero uses the provider default rather than disabling the bound.
