@@ -351,6 +351,15 @@ type eventResult struct {
 	sawTerminalSignal bool
 }
 
+type opencodeTodo struct {
+	Content string `json:"content"`
+	Status  string `json:"status"`
+}
+
+type opencodeTodoInput struct {
+	Todos []opencodeTodo `json:"todos"`
+}
+
 // processEvents reads JSON lines from r, dispatches events to ch, and returns
 // the accumulated result. This is the core scanner loop, extracted for testability.
 func (b *opencodeBackend) processEvents(r io.Reader, ch chan<- Message) eventResult {
@@ -398,6 +407,8 @@ func (b *opencodeBackend) processEvents(r io.Reader, ch chan<- Message) eventRes
 	// back-compat regression), and voidness is orthogonal to it.
 	stepProducedOutput := false // current step emitted text, a tool call, or reported usage
 	lastStepVoid := false       // the most recently closed step produced nothing at all
+	var todos []opencodeTodo
+	sawToolCall := false
 
 	scanner := newAgentStreamScanner(r)
 
@@ -426,6 +437,13 @@ func (b *opencodeBackend) processEvents(r io.Reader, ch chan<- Message) eventRes
 			b.handleReasoningEvent(event, ch, &reasoning)
 		case "tool_use":
 			b.handleToolUseEvent(event, ch)
+			sawToolCall = true
+			if event.Part.Tool == "todowrite" && event.Part.State != nil {
+				var input opencodeTodoInput
+				if err := json.Unmarshal(event.Part.State.Input, &input); err == nil {
+					todos = input.Todos
+				}
+			}
 			stepProducedOutput = true
 			if event.Part.Metadata == nil || !event.Part.Metadata.ProviderExecuted {
 				stepHasContinuationTool = true
@@ -505,6 +523,30 @@ func (b *opencodeBackend) processEvents(r io.Reader, ch chan<- Message) eventRes
 	if finalOutput == "" {
 		if rb := strings.TrimSpace(reasoning.String()); rb != "" {
 			finalOutput = rb
+		}
+	}
+	if finalStatus == "completed" {
+		var incomplete []opencodeTodo
+		for _, todo := range todos {
+			if todo.Status != "completed" && todo.Status != "cancelled" {
+				incomplete = append(incomplete, todo)
+			}
+		}
+		if len(incomplete) > 0 {
+			var details strings.Builder
+			for i, todo := range incomplete {
+				if i > 0 {
+					details.WriteString("; ")
+				}
+				fmt.Fprintf(&details, "%q (%s)", todo.Content, todo.Status)
+			}
+			finalStatus = "incomplete_todos"
+			finalError = fmt.Sprintf("opencode stopped with %d incomplete todo(s): %s", len(incomplete), details.String())
+			trySend(ch, Message{Type: MessageError, Content: finalError})
+		} else if finalOutput == "" && sawStepFinish && !sawToolCall {
+			finalStatus = "failed"
+			finalError = "opencode returned empty output after closing a step"
+			trySend(ch, Message{Type: MessageError, Content: finalError})
 		}
 	}
 

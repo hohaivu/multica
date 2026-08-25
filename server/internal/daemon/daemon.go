@@ -7997,6 +7997,16 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			FailureReason: "idle_watchdog",
 			Usage:         usageEntries,
 		}, nil
+	case "incomplete_todos":
+		return TaskResult{
+			Status:        "blocked",
+			Comment:       result.Error,
+			SessionID:     result.SessionID,
+			WorkDir:       env.WorkDir,
+			EnvRoot:       env.RootDir,
+			FailureReason: "opencode_incomplete_todos",
+			Usage:         usageEntries,
+		}, nil
 	case "cancelled":
 		// Server cancelled the task (e.g. issue reassignment, user cancel).
 		// handleTask's cancelledByPoll branch already discards this result,

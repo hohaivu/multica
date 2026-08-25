@@ -2909,6 +2909,12 @@ func TestShouldRetryWithFreshSession(t *testing.T) {
 			want:           false,
 		},
 		{
+			name:           "incomplete OpenCode todos keeps the session",
+			result:         agent.Result{Status: "incomplete_todos", Error: "remaining todos"},
+			priorSessionID: "stale-id",
+			want:           false,
+		},
+		{
 			name:           "cancelled terminal does not retry",
 			result:         agent.Result{Status: "cancelled"},
 			priorSessionID: "stale-id",

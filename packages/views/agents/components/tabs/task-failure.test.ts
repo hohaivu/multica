@@ -121,8 +121,11 @@ describe("failureReasonLabel", () => {
       "Agent returned a fallback message",
     );
     expect(failureReasonLabel("idle_watchdog", enT)).toBe(
-      "Agent stopped after inactivity",
-    );
+		"Agent stopped after inactivity",
+	);
+	  expect(failureReasonLabel("opencode_incomplete_todos", enT)).toBe(
+		"OpenCode stopped with incomplete todos",
+	);
     expect(failureReasonLabel("cancelled", enT)).toBe(
       "Cancelled by the system",
     );
