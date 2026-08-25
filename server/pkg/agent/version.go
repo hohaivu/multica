@@ -19,6 +19,7 @@ var MinVersions = map[string]string{
 	"qwen":        "0.20.0",  // stream-json protocol captured and verified against Qwen Code 0.20.0
 	"dim":         "0.3.10",  // cross-run session/load: per-process lock releases on graceful exit
 	"mcode":       "0.1.2",   // ACP v1 session/new, prompt, MCP capability forwarding
+	"zeroclaw":    "0.8.0",   // persistent ACP sessions and session/resume were added in 0.8.0
 }
 
 // MinQuickCreateCLIVersion gates the agent-create (quick-create) flow against

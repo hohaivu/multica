@@ -128,10 +128,14 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 		var tailDoneOnce sync.Once
 		defer func() {
 			stopTail()
-			<-tailDone
+			// Close before waiting when no tail goroutine was ever started:
+			// nothing else will ever close tailDone, so waiting first
+			// deadlocks every run that never reports a session id (a
+			// plain-text reply, an immediate provider error).
 			if !tailStarted {
 				tailDoneOnce.Do(func() { close(tailDone) })
 			}
+			<-tailDone
 		}()
 		startTail := func(sessionID string) {
 			if sessionID == "" || tailStarted {
@@ -171,12 +175,23 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 				// Keep plain-text fallback handling for terminal CLI diagnostics
 				// and older fixture output. With stream-json enabled, normal model
 				// text arrives through step_update.text_delta below.
+				//
+				// The daemon concatenates streamed MessageText with no separator
+				// (pendingText.WriteString), so the streamed text must carry the
+				// line breaks itself. Mirror output's construction — prefix the
+				// newline on every line after the first, and stream blank lines
+				// too — so the persisted task_message text reconstructs output
+				// exactly. Emitting bare, blank-skipped lines dropped every newline,
+				// collapsing block markdown (headings, lists) onto one line in
+				// chat (#6149).
+				chunk := line
 				if output.Len() > 0 {
 					output.WriteByte('\n')
+					chunk = "\n" + line
 				}
 				output.WriteString(line)
-				if strings.TrimSpace(line) != "" {
-					trySend(msgCh, Message{Type: MessageText, Content: line})
+				if chunk != "" {
+					trySend(msgCh, Message{Type: MessageText, Content: chunk})
 				}
 				continue
 			}

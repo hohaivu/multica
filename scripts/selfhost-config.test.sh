@@ -56,6 +56,8 @@ require_config "$config" 'FRONTEND_ORIGIN: http://localhost:3100'
 require_config "$config" 'GOOGLE_REDIRECT_URI: http://localhost:3100/auth/callback'
 require_config "$config" 'MULTICA_APP_URL: http://localhost:3100'
 require_config "$config" 'SMTP_FROM_EMAIL: multica@example.com'
+require_config "$config" 'MULTICA_DATABASE_STARTUP_TIMEOUT: 3m'
+require_config "$config" 'MULTICA_DATABASE_CONNECT_TIMEOUT: 5s'
 require_config "$config" 'FF_AGENT_RESUME_PRIOR_SESSION: "false"'
 
 # The rollback switch is forwarded to the backend and can be enabled without
