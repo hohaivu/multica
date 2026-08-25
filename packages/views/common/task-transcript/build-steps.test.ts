@@ -10,6 +10,7 @@ import {
   timelineTicks,
   toolKindTotals,
   type TraceCallStep,
+  type TraceStep,
 } from "./build-steps";
 import type { TimelineItem } from "./build-timeline";
 
@@ -19,11 +20,11 @@ function at(seconds: number): string {
 }
 
 let seq = 0;
-function call(tool: string, seconds: number, input?: Record<string, unknown>): TimelineItem {
-  return { seq: ++seq, type: "tool_use", tool, input, created_at: at(seconds) };
+function call(tool: string, seconds: number, input?: Record<string, unknown>, callId?: string): TimelineItem {
+  return { seq: ++seq, type: "tool_use", tool, input, created_at: at(seconds), call_id: callId };
 }
-function result(tool: string, seconds: number, output = "ok"): TimelineItem {
-  return { seq: ++seq, type: "tool_result", tool, output, created_at: at(seconds) };
+function result(tool: string, seconds: number, output = "ok", callId?: string, status?: string): TimelineItem {
+  return { seq: ++seq, type: "tool_result", tool, output, created_at: at(seconds), call_id: callId, status };
 }
 function text(seconds: number, content = "done"): TimelineItem {
   return { seq: ++seq, type: "text", content, created_at: at(seconds) };
@@ -83,6 +84,60 @@ describe("buildSteps", () => {
     ]);
 
     expect(steps.map((s) => s.kind)).toEqual(["thinking", "text", "error"]);
+  });
+
+  it("pairs by call_id even when the result names arrive out of call order", () => {
+    const first = call("Read", 0, { file_path: "a.ts" }, "call-a");
+    const second = call("Read", 1, { file_path: "b.ts" }, "call-b");
+    const steps = buildSteps([
+      first,
+      second,
+      // b's result lands first — FIFO would misattribute it to `first`.
+      result("Read", 5, "b done", "call-b"),
+      result("Read", 9, "a done", "call-a"),
+    ]) as TraceCallStep[];
+
+    expect(steps).toHaveLength(2);
+    expect(steps[0]!.call?.input).toEqual({ file_path: "a.ts" });
+    expect(steps[0]!.result?.output).toBe("a done");
+    expect(steps[1]!.call?.input).toEqual({ file_path: "b.ts" });
+    expect(steps[1]!.result?.output).toBe("b done");
+  });
+
+  it("falls back to tool-name FIFO when a result carries no call_id", () => {
+    const first = call("Read", 0, undefined, "call-a");
+    const steps = buildSteps([first, result("Read", 5, "done")]) as TraceCallStep[];
+
+    expect(steps).toHaveLength(1);
+    expect(steps[0]!.result?.output).toBe("done");
+  });
+
+  it("attaches a result that lands long after its call", () => {
+    const steps = buildSteps([
+      call("read_file", 0, undefined, "call-1"),
+      text(1),
+      text(2),
+      call("terminal", 3),
+      result("terminal", 4),
+      result("read_file", 180, "invalid tool call", "call-1", "failed"),
+    ]) as TraceStep[];
+
+    const readStep = steps.find(
+      (s): s is TraceCallStep => "tool" in s && s.tool === "read_file",
+    )!;
+    expect(readStep.result?.output).toBe("invalid tool call");
+    expect(readStep.status).toBe("failed");
+  });
+
+  it("carries the result's status onto the step, including for an orphan result", () => {
+    const paired = buildSteps([
+      call("read_file", 0, undefined, "call-1"),
+      result("read_file", 1, "nope", "call-1", "failed"),
+    ]) as TraceCallStep[];
+    expect(paired[0]!.status).toBe("failed");
+
+    const orphan = buildSteps([result("read_file", 0, "nope", "call-2", "failed")]) as TraceCallStep[];
+    expect(orphan[0]!.status).toBe("failed");
   });
 
   it("leaves duration undefined rather than guessing when a timestamp is missing", () => {

@@ -10,6 +10,10 @@ export interface TimelineItem {
   input?: Record<string, unknown>;
   output?: string;
   created_at?: string;
+  /** ACP tool call id, for exact tool_use/tool_result pairing. */
+  call_id?: string;
+  /** Terminal status for tool_result (e.g. "completed", "failed"). */
+  status?: string;
 }
 
 function canMergeStreamingText(prev: TimelineItem, next: TimelineItem): boolean {
@@ -61,6 +65,8 @@ export function buildTimeline(msgs: TaskMessagePayload[]): TimelineItem[] {
       input: msg.input,
       output: msg.output,
       created_at: msg.created_at,
+      call_id: msg.call_id,
+      status: msg.status,
     });
   }
   return redactTimelineItems(coalesceTimelineItems(items));

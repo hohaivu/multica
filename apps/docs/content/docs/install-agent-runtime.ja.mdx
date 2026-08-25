@@ -42,6 +42,15 @@ Multica は現在、次のコマンドを検出します。
 
 ここでの「対応」とは、Multica が該当する CLI を呼び出せるという意味です。そのツールのアカウント、サブスクリプション、モデルの利用枠を Multica が提供するわけではありません。
 
+Antigravity ACP は他と異なり、Multica が `PATH` 上で検出する CLI ではありません。これは Google の Antigravity 向け ACP サーバー（`agy_acp_server.par`）で、上記の `agy` CLI とは別に約 300MB をダウンロードする必要があり、デーモンが代わりにインストールします。
+
+```bash
+multica runtime install antigravity-acp   # 初回のみ約300MBのダウンロード。Apple Silicon、Linux、Windows のみ対応（darwin-x86_64 ビルドなし）
+multica runtime auth antigravity-acp      # 初回のみ必要な対話的な Google ログイン（ブラウザが開きます）
+```
+
+`install` 単体では認証は行われず、`auth` も自動実行されることはありません。ブラウザにアクセスできるターミナルで自分自身で実行してください。バイナリと認証情報（`runtime auth` によるもの、または環境変数の `GEMINI_API_KEY`/`GOOGLE_API_KEY`）の両方が揃った時点で、デーモンはこのランタイムを登録します。
+
 ## 2. ローカル環境でログインする
 
 インストール後、まずターミナルからツールを単独で起動し、各ツールの手順に従ってログインするか、モデルプロバイダーを設定してください。ターミナル上でリクエストを実行できない場合は、デーモンから呼び出しても失敗します。

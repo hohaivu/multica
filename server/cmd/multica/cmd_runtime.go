@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/multica-ai/multica/server/internal/cli"
+	"github.com/multica-ai/multica/server/internal/daemon"
 )
 
 var runtimeCmd = &cobra.Command{
@@ -68,6 +69,29 @@ var runtimeDeleteCmd = &cobra.Command{
 	RunE: runRuntimeDelete,
 }
 
+var runtimeInstallCmd = &cobra.Command{
+	Use:   "install <provider>",
+	Short: "Install a daemon-managed runtime binary on this machine",
+	Long: "Download and install a runtime binary this machine's daemon can drive.\n\n" +
+		"Currently supports \"antigravity-acp\", the Google Antigravity ACP server " +
+		"(a separate ~300MB download from the agy CLI). Installing does not authenticate it: " +
+		"run `multica runtime auth antigravity-acp`, or set GEMINI_API_KEY / GOOGLE_API_KEY, " +
+		"before the daemon will register it as a healthy runtime.",
+	Args: exactArgs(1),
+	RunE: runRuntimeInstall,
+}
+
+var runtimeAuthCmd = &cobra.Command{
+	Use:   "auth <provider>",
+	Short: "Run the one-time interactive login for a daemon-managed runtime",
+	Long: "Drive the interactive login a daemon-managed runtime needs before it works.\n\n" +
+		"Currently supports \"antigravity-acp\": this opens a real Google OAuth browser " +
+		"flow, so run it yourself at a terminal that can reach a browser. It never runs " +
+		"automatically, and the daemon never calls it on your behalf.",
+	Args: exactArgs(1),
+	RunE: runRuntimeAuth,
+}
+
 func init() {
 	runtimeCmd.AddCommand(runtimeListCmd)
 	runtimeCmd.AddCommand(runtimeUsageCmd)
@@ -75,6 +99,10 @@ func init() {
 	runtimeCmd.AddCommand(runtimeUpdateCmd)
 	runtimeCmd.AddCommand(runtimeRenameCmd)
 	runtimeCmd.AddCommand(runtimeDeleteCmd)
+	runtimeCmd.AddCommand(runtimeInstallCmd)
+	runtimeCmd.AddCommand(runtimeAuthCmd)
+
+	runtimeAuthCmd.Flags().String("method", daemon.AntigravityACPMethodOAuthPersonal, "ACP authenticate methodId (oauth-personal or oauth-business)")
 
 	// runtime list
 	runtimeListCmd.Flags().String("output", "table", "Output format: table or json")
@@ -137,6 +165,36 @@ func runRuntimeList(cmd *cobra.Command, _ []string) error {
 	}
 	cli.PrintTable(os.Stdout, headers, rows)
 	return nil
+}
+
+func runRuntimeInstall(cmd *cobra.Command, args []string) error {
+	if err := requireHumanLocalCommand("runtime install"); err != nil {
+		return err
+	}
+	switch args[0] {
+	case "antigravity-acp":
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+		defer cancel()
+		_, err := daemon.InstallAntigravityACP(ctx, cmd.OutOrStdout())
+		return err
+	default:
+		return fmt.Errorf("unknown runtime %q (supported: antigravity-acp)", args[0])
+	}
+}
+
+func runRuntimeAuth(cmd *cobra.Command, args []string) error {
+	if err := requireHumanLocalCommand("runtime auth"); err != nil {
+		return err
+	}
+	switch args[0] {
+	case "antigravity-acp":
+		method, _ := cmd.Flags().GetString("method")
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		return daemon.AuthenticateAntigravityACP(ctx, cmd.OutOrStdout(), method)
+	default:
+		return fmt.Errorf("unknown runtime %q (supported: antigravity-acp)", args[0])
+	}
 }
 
 func runRuntimeUsage(cmd *cobra.Command, args []string) error {

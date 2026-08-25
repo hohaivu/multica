@@ -21,6 +21,7 @@ Multica は、普段使っている AI コーディングツールの代わり�
 | ツール | 検出コマンド | セッション再開 | Multica による MCP 管理 | スキルの注入先 |
 |---|---|---:|---:|---|
 | Antigravity | `agy` | ✓ | — | `.agents/skills/` |
+| Antigravity ACP | `agy_acp_server.par` | ✓ | ✓ | — |
 | Claude Code | `claude` | ✓ | ✓ | `.claude/skills/` |
 | CodeBuddy | `codebuddy` | ✓ | ✓ | `.codebuddy/skills/` |
 | Codex | `codex` | ✓ | ✓ | `$CODEX_HOME/skills/` |
@@ -46,6 +47,8 @@ Multica は、普段使っている AI コーディングツールの代わり�
 | Dim | `dim` | ✓ | ✓ | — |
 
 「Multica による MCP 管理」とは、エージェント設定に MCP server を入力し、Multica が実行前にその設定を対応ツールへ渡せることを意味します。そのツールにほかの MCP 設定方法がない、という意味ではありません。
+
+Antigravity ACP は `agy` CLI とは別の、Google が提供する約 300 MB のダウンロード（`agy_acp_server.par`）で、Intel Mac 向けのビルドはありません。`multica runtime install antigravity-acp` でインストールしたあと、1 回の対話的な Google ログインを完了させるまで、daemon はこれを正常なランタイムとして登録しません。詳しくは [AI コーディングツールのインストール](/install-agent-runtime) を参照してください。
 
 ## モデルの取得元
 

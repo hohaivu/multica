@@ -8498,9 +8498,10 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 					s := msgSeq.Add(1)
 					mu.Lock()
 					batch = append(batch, TaskMessageData{
-						Seq:  int(s),
-						Type: "tool_use",
-						Tool: msg.Tool,
+						Seq:    int(s),
+						Type:   "tool_use",
+						Tool:   msg.Tool,
+						CallID: msg.CallID,
 						// Redact before the payload leaves this process, not
 						// only on arrival. The server redacts again in its
 						// ingest handler, but that is the *remote* side: a
@@ -8546,6 +8547,8 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 						Type:   "tool_result",
 						Tool:   toolName,
 						Output: output,
+						CallID: msg.CallID,
+						Status: msg.Status,
 					})
 					mu.Unlock()
 				case agent.MessageThinking:

@@ -56,9 +56,11 @@ WITH incoming AS (
         unnest(sqlc.arg('tools')::text[]) AS tool,
         unnest(sqlc.arg('contents')::text[]) AS content,
         unnest(sqlc.arg('inputs')::text[]) AS input,
-        unnest(sqlc.arg('outputs')::text[]) AS output
+        unnest(sqlc.arg('outputs')::text[]) AS output,
+        unnest(sqlc.arg('call_ids')::text[]) AS call_id,
+        unnest(sqlc.arg('statuses')::text[]) AS status
 ), inserted AS (
-    INSERT INTO task_message (id, task_id, seq, type, tool, content, input, output)
+    INSERT INTO task_message (id, task_id, seq, type, tool, content, input, output, call_id, status)
     SELECT
         m.id,
         sqlc.arg('task_id')::uuid,
@@ -67,7 +69,9 @@ WITH incoming AS (
         NULLIF(m.tool, ''),
         NULLIF(m.content, ''),
         NULLIF(m.input, '')::jsonb,
-        NULLIF(m.output, '')
+        NULLIF(m.output, ''),
+        NULLIF(m.call_id, ''),
+        NULLIF(m.status, '')
     FROM incoming AS m
     RETURNING *
 )

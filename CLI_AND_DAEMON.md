@@ -206,6 +206,7 @@ The daemon auto-detects these AI CLIs on your PATH:
 |-----|---------|-------------|
 | [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | `claude` | Anthropic's coding agent |
 | [Antigravity CLI](https://antigravity.google/docs/cli-install) | `agy` | Google Antigravity CLI |
+| Antigravity ACP | `agy_acp_server.par` | Google Antigravity's ACP server (separate ~300MB download, no darwin-x86_64 build; see [Antigravity ACP runtime](#antigravity-acp-runtime) below) |
 | [CodeBuddy Code](https://www.codebuddy.ai/docs/cli/quickstart) | `codebuddy` | Tencent CodeBuddy Code (reads `CODEBUDDY.md`, not `CLAUDE.md`) |
 | [DevEco Code](https://gitcode.com/openharmony-sig/deveco-code) | `deveco` | OpenHarmony DevEco Code |
 | [Codex](https://github.com/openai/codex) | `codex` | OpenAI's coding agent |
@@ -230,6 +231,17 @@ The daemon auto-detects these AI CLIs on your PATH:
 | [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) | `dsh` | DeepSeek Harness (`dsh --profile multica --stdio`; requires the Multica runtime profile to be installed; reads AGENTS.md and .dsh/skills/) |
 
 You need at least one installed. The daemon registers each detected CLI as an available runtime.
+
+#### Antigravity ACP runtime
+
+Unlike every other row above, `agy_acp_server.par` is not auto-detected on `PATH` — it is a daemon-managed binary you install explicitly:
+
+```bash
+multica runtime install antigravity-acp   # one-time ~300MB download; Apple Silicon / Linux / Windows only
+multica runtime auth antigravity-acp      # one-time interactive Google login (opens a browser)
+```
+
+`install` only downloads and unpacks the binary; it never authenticates. The daemon registers the runtime only once credentials also exist — either from `runtime auth` or from `GEMINI_API_KEY`/`GOOGLE_API_KEY` in the environment. Neither command ever runs automatically: acquisition never happens at daemon startup, and `runtime auth` must be run yourself at a terminal that can reach a browser, since it drives a real interactive OAuth consent screen with no headless fallback. `MULTICA_ANTIGRAVITY_ACP_PATH` (see the overrides table below) points at a hand-installed binary and skips managed acquisition entirely.
 
 ### How It Works
 
@@ -301,6 +313,7 @@ Agent-specific overrides:
 | `MULTICA_CLAUDE_ARGS` | Default extra arguments for Claude Code runs |
 | `MULTICA_ANTIGRAVITY_PATH` | Custom path to the `agy` binary |
 | `MULTICA_ANTIGRAVITY_MODEL` | Override the Antigravity model used |
+| `MULTICA_ANTIGRAVITY_ACP_PATH` | Custom path to the `agy_acp_server.par` binary, bypassing managed install (no model override: the ACP server doesn't support model selection) |
 | `MULTICA_CODEBUDDY_PATH` | Custom path to the `codebuddy` binary |
 | `MULTICA_CODEBUDDY_MODEL` | Override the CodeBuddy model used |
 | `MULTICA_CODEBUDDY_ARGS` | Default extra arguments for CodeBuddy runs |

@@ -4517,6 +4517,8 @@ type TaskMessageRequest struct {
 	Content string         `json:"content,omitempty"`
 	Input   map[string]any `json:"input,omitempty"`
 	Output  string         `json:"output,omitempty"`
+	CallID  string         `json:"call_id,omitempty"`
+	Status  string         `json:"status,omitempty"`
 }
 
 type TaskMessageBatchRequest struct {
@@ -4573,6 +4575,8 @@ func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 		Contents: make([]string, 0, n),
 		Inputs:   make([]string, 0, n),
 		Outputs:  make([]string, 0, n),
+		CallIds:  make([]string, 0, n),
+		Statuses: make([]string, 0, n),
 	}
 	for _, msg := range req.Messages {
 		id, err := uuid.NewV7()
@@ -4600,6 +4604,8 @@ func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 		msg.Tool = util.SanitizeTextForPostgres(msg.Tool)
 		msg.Content = util.SanitizeTextForPostgres(msg.Content)
 		msg.Output = util.SanitizeTextForPostgres(msg.Output)
+		msg.CallID = util.SanitizeTextForPostgres(msg.CallID)
+		msg.Status = util.SanitizeTextForPostgres(msg.Status)
 		if msg.Input != nil {
 			if cleaned, ok := util.SanitizeJSONForPostgres(msg.Input).(map[string]any); ok {
 				msg.Input = cleaned
@@ -4627,6 +4633,8 @@ func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 		params.Tools = append(params.Tools, msg.Tool)
 		params.Contents = append(params.Contents, msg.Content)
 		params.Inputs = append(params.Inputs, inputJSON)
+		params.CallIds = append(params.CallIds, msg.CallID)
+		params.Statuses = append(params.Statuses, msg.Status)
 		params.Outputs = append(params.Outputs, msg.Output)
 	}
 
@@ -4776,6 +4784,8 @@ func taskMessageToPayload(m db.TaskMessage, taskID, issueID string) protocol.Tas
 		Input:     input,
 		Output:    m.Output.String,
 		CreatedAt: createdAt,
+		CallID:    m.CallID.String,
+		Status:    m.Status.String,
 	}
 }
 

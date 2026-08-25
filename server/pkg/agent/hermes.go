@@ -1384,6 +1384,21 @@ func isACPHeldByProcess(err error) bool {
 	return strings.Contains(text, "held by another process")
 }
 
+// isACPAuthRequired reports whether err is the agent refusing a request
+// because no credentials are stored yet. Confirmed against the Antigravity
+// ACP server: an unauthenticated session/new fails with
+// {"code": -32000, "message": "Authentication required"}. -32000 is also
+// ZeroClaw's session-not-found code (see isACPSessionNotFound), so this
+// checks the wording, not the code alone.
+func isACPAuthRequired(err error) bool {
+	var rpcErr *acpRPCError
+	if !errors.As(err, &rpcErr) {
+		return false
+	}
+	text := strings.ToLower(rpcErr.Message + " " + rpcErr.Data)
+	return strings.Contains(text, "authentication required") || strings.Contains(text, "not authenticated")
+}
+
 // hermesResumeLostError is the fallback reason for a resumed session Hermes
 // could not rebuild, used only when nothing more specific was captured.
 const hermesResumeLostError = "hermes could not restore the resumed session; it refused the turn without running the agent"

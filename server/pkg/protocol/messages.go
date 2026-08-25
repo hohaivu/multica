@@ -171,6 +171,8 @@ type TaskMessagePayload struct {
 	Input     map[string]any `json:"input,omitempty"`   // tool input (tool_use only)
 	Output    string         `json:"output,omitempty"`  // tool output (tool_result only)
 	CreatedAt string         `json:"created_at,omitempty"`
+	CallID    string         `json:"call_id,omitempty"` // ACP tool call id, for exact use/result pairing
+	Status    string         `json:"status,omitempty"`  // terminal status for tool_result ("completed", "failed", ...)
 }
 
 // DaemonRegisterPayload is sent from daemon to server on connection.

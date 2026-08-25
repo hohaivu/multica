@@ -1648,6 +1648,23 @@ export const AgentTaskSchema = z.object({
 
 export const AgentTaskListSchema = z.array(AgentTaskSchema);
 
+export const TaskMessageSchema = z.object({
+  task_id: z.string().default(""),
+  issue_id: z.string().optional(),
+  chat_session_id: z.string().optional(),
+  seq: z.number().default(0),
+  type: z.string().default(""),
+  tool: z.string().optional(),
+  content: z.string().optional(),
+  input: z.record(z.string(), z.unknown()).optional(),
+  output: z.string().optional(),
+  created_at: z.string().optional(),
+  call_id: z.string().optional(),
+  status: z.string().optional(),
+}).loose();
+
+export const TaskMessageListSchema = z.array(TaskMessageSchema);
+
 // Task cancellation (`POST /api/tasks/:id/cancel`) is consumed directly by
 // chat recovery. Its optional message payload must be well-formed before the
 // UI deletes a message from cache or restores text into the input.

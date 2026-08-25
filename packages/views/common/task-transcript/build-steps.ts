@@ -10,10 +10,12 @@ import type { TimelineItem } from "./build-timeline";
  * the pair back together, so one call reads as one line and its result is that
  * line's detail.
  *
- * Pairing is positional because the events carry no call id. `agent.Message`
- * has `CallID` all the way to the daemon, but `TaskMessageData` drops it before
- * the report and `task_message` has no column for it — until that lands, a
- * result belongs to the oldest still-open call with the same tool name.
+ * Pairing prefers the ACP call id: a `tool_result` with a `call_id` is matched
+ * to the `tool_use` that carried the same id, however many other calls of the
+ * same tool are open at once. Rows that predate `call_id` (or a backend that
+ * never set one) fall back to the oldest still-open call with the same tool
+ * name — a queue rather than a single lookup, since a provider can run
+ * several same-named calls in parallel.
  */
 
 /** One tool call. Either side can be missing: a call still running has no
@@ -31,6 +33,8 @@ export interface TraceCallStep {
   /** Wall-clock ms between call and result. Undefined when either side is
    *  missing a timestamp — never guessed. */
   durationMs?: number;
+  /** Terminal status reported on the result (e.g. "completed", "failed"). */
+  status?: string;
 }
 
 /** Agent prose, model thinking, or an error: one message, nothing to pair. */
@@ -95,10 +99,17 @@ function durationBetween(start?: string, end?: string): number | undefined {
 /** Fold `tool_use` / `tool_result` pairs into single steps, in stream order. */
 export function buildSteps(items: TimelineItem[]): TraceStep[] {
   const steps: TraceStep[] = [];
-  // Open calls per tool, oldest first. FIFO rather than nearest-preceding:
-  // when a provider runs two calls of the same tool in parallel it returns
-  // them in call order more often than in reverse.
-  const open = new Map<string, TraceCallStep[]>();
+  // Open calls per tool, oldest first — the fallback queue for results with
+  // no call_id.
+  const openByTool = new Map<string, TraceCallStep[]>();
+  // Open calls by ACP call id, for exact pairing when both sides carry one.
+  const openByCallId = new Map<string, TraceCallStep>();
+
+  const removeFromToolQueue = (step: TraceCallStep) => {
+    const queue = openByTool.get(step.tool);
+    const idx = queue?.indexOf(step) ?? -1;
+    if (idx !== -1) queue!.splice(idx, 1);
+  };
 
   for (const item of items) {
     if (item.type === "tool_use") {
@@ -111,17 +122,24 @@ export function buildSteps(items: TimelineItem[]): TraceStep[] {
         startedAt: item.created_at,
       };
       steps.push(step);
-      const queue = open.get(tool);
+      const queue = openByTool.get(tool);
       if (queue) queue.push(step);
-      else open.set(tool, [step]);
+      else openByTool.set(tool, [step]);
+      if (item.call_id) openByCallId.set(item.call_id, step);
       continue;
     }
 
     if (item.type === "tool_result") {
       const tool = item.tool ?? "";
-      const pending = open.get(tool)?.shift();
+      const pending = (item.call_id ? openByCallId.get(item.call_id) : undefined)
+        ?? openByTool.get(tool)?.shift();
       if (pending) {
+        // Remove from both structures regardless of which one produced the
+        // match, so the same call can never be handed out to a second result.
+        if (pending.call?.call_id) openByCallId.delete(pending.call.call_id);
+        removeFromToolQueue(pending);
         pending.result = item;
+        pending.status = item.status;
         pending.endedAt = item.created_at;
         pending.durationMs = durationBetween(pending.startedAt, item.created_at);
         continue;
@@ -132,6 +150,7 @@ export function buildSteps(items: TimelineItem[]): TraceStep[] {
         seq: item.seq,
         tool,
         result: item,
+        status: item.status,
         startedAt: item.created_at,
         endedAt: item.created_at,
       });

@@ -407,6 +407,7 @@ export function ProviderLogo({
     case "qoderclicn":
       return <QoderLogo className={className} />;
     case "antigravity":
+    case "antigravityacp":
       return <AntigravityLogo className={className} />;
     case "traecli":
       return <TraeLogo className={className} />;

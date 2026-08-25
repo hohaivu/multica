@@ -1435,6 +1435,10 @@ function StepRow({
     : firstLineOf((row as TraceMessageStep).item.content);
   const pending = call !== null && isLive && !call.result;
   const selected = selectedSeq === row.seq;
+  // A failed tool call gets the same destructive treatment as an error row —
+  // otherwise it renders identically to an ordinary successful call once its
+  // (possibly late) result lands.
+  const failed = row.kind === "error" || call?.status === "failed";
 
   return (
     <button
@@ -1444,7 +1448,7 @@ function StepRow({
       className={cn(
         "group flex w-full items-start gap-2 px-4 py-1.5 text-left transition-colors",
         selected ? "bg-brand/8" : "hover:bg-accent/40",
-        row.kind === "error" && "bg-destructive/5",
+        failed && "bg-destructive/5",
       )}
     >
       <OffsetCell startedAt={row.startedAt} runStartMs={runStartMs} />
@@ -1452,21 +1456,21 @@ function StepRow({
         aria-hidden
         className={cn(
           "mt-0.5 w-0.5 self-stretch rounded-full",
-          selected ? "bg-brand" : row.kind === "error" ? "bg-destructive" : "bg-border",
+          selected ? "bg-brand" : failed ? "bg-destructive" : "bg-border",
         )}
       />
       <StepIcon
         step={row}
         className={cn(
           "mt-1 h-3 w-3 shrink-0",
-          row.kind === "error" ? "text-destructive" : "text-muted-foreground",
+          failed ? "text-destructive" : "text-muted-foreground",
         )}
       />
       <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
         <span
           className={cn(
             "shrink-0 text-caption font-medium",
-            row.kind === "error" ? "text-destructive" : "text-foreground",
+            failed ? "text-destructive" : "text-foreground",
           )}
         >
           {label}
@@ -1503,8 +1507,15 @@ function GroupRow({
     [t],
   );
 
+  const failed = row.steps.some((s) => s.status === "failed");
+
   return (
-    <div className={cn(selectedSeq !== null && row.steps.some((s) => s.seq === selectedSeq) && "bg-brand/5")}>
+    <div
+      className={cn(
+        selectedSeq !== null && row.steps.some((s) => s.seq === selectedSeq) && "bg-brand/5",
+        failed && "bg-destructive/5",
+      )}
+    >
       <button
         type="button"
         onClick={() => onToggleGroup(row.seq)}

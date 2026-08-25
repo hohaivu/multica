@@ -42,6 +42,15 @@ Multica는 현재 다음 명령을 감지합니다.
 
 "지원됨"은 Multica가 해당 CLI를 호출할 수 있다는 뜻이며 Multica가 도구의 계정, 구독, 모델 사용량을 제공한다는 뜻은 아닙니다.
 
+Antigravity ACP는 다릅니다. Multica가 `PATH`에서 감지하는 CLI가 아니라, Google이 Antigravity용으로 제공하는 ACP 서버(`agy_acp_server.par`)로, 위의 `agy` CLI와는 별도로 약 300MB를 다운로드해야 하며 데몬이 대신 설치합니다.
+
+```bash
+multica runtime install antigravity-acp   # 최초 1회 약 300MB 다운로드; Apple Silicon, Linux, Windows에서만 지원 (darwin-x86_64 빌드 없음)
+multica runtime auth antigravity-acp      # 최초 1회 대화형 Google 로그인 (브라우저가 열립니다)
+```
+
+`install`만으로는 인증되지 않으며, `auth`는 자동으로 실행되지 않습니다. 브라우저에 접속할 수 있는 터미널에서 직접 실행하세요. 바이너리와 인증 정보(`runtime auth`를 통한 것이거나 환경 변수 `GEMINI_API_KEY`/`GOOGLE_API_KEY`)가 모두 준비된 경우에만 데몬이 이 런타임을 등록합니다.
+
 ## 2. 로컬에서 로그인 완료
 
 설치 후 터미널에서 도구를 한 번 직접 실행하고 도구 자체의 절차에 따라 로그인하거나 모델 서비스를 설정합니다. 터미널에서 요청을 완료하지 못하면 데몬이 호출할 때도 실패합니다.

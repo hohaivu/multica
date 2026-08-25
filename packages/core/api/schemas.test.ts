@@ -15,6 +15,7 @@ import {
   EMPTY_LIST_TELEGRAM_INSTALLATIONS_RESPONSE,
   EMPTY_REDEEM_TELEGRAM_BINDING_TOKEN_RESPONSE,
   AgentTaskListSchema,
+  TaskMessageListSchema,
   AutopilotQuotaUsageSchema,
   AutopilotRunSchema,
   FALLBACK_AUTOPILOT_RUN,
@@ -478,6 +479,35 @@ describe("AgentTaskListSchema", () => {
     expect(parsed[0]?.durable_work_dir).toBeUndefined();
     expect(parsed[0]?.relative_durable_work_dir).toBeUndefined();
     expect(parsed[0]?.branch_name).toBeUndefined();
+  });
+});
+
+describe("TaskMessageListSchema", () => {
+  it("parses a tool_use/tool_result pair with call_id and status", () => {
+    const parsed = TaskMessageListSchema.parse([
+      { task_id: "t-1", seq: 1, type: "tool_use", tool: "read_file", call_id: "call-1" },
+      { task_id: "t-1", seq: 2, type: "tool_result", tool: "read_file", call_id: "call-1", status: "failed" },
+    ]);
+    expect(parsed[1]?.call_id).toBe("call-1");
+    expect(parsed[1]?.status).toBe("failed");
+  });
+
+  it("accepts messages from older backends without call_id or status", () => {
+    const parsed = TaskMessageListSchema.parse([
+      { task_id: "t-1", seq: 1, type: "text", content: "hi" },
+    ]);
+    expect(parsed[0]?.call_id).toBeUndefined();
+    expect(parsed[0]?.status).toBeUndefined();
+  });
+
+  it("falls back to an empty list on a malformed response", () => {
+    const parsed = parseWithFallback(
+      { not: "an array" },
+      TaskMessageListSchema,
+      [],
+      { endpoint: "GET /api/tasks/:id/messages" },
+    );
+    expect(parsed).toEqual([]);
   });
 });
 

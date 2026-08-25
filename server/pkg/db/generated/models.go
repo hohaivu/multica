@@ -1230,6 +1230,8 @@ type TaskMessage struct {
 	Input     []byte             `json:"input"`
 	Output    pgtype.Text        `json:"output"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	CallID    pgtype.Text        `json:"call_id"`
+	Status    pgtype.Text        `json:"status"`
 }
 
 type TaskToken struct {

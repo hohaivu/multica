@@ -21,6 +21,7 @@ Multica 不会替代你使用的 AI 编程工具。运行时会调用电脑上�
 | 工具 | 检测命令 | 会话恢复 | Multica 管理 MCP | Skill 注入位置 |
 |---|---|---:|---:|---|
 | Antigravity | `agy` | ✓ | — | `.agents/skills/` |
+| Antigravity ACP | `agy_acp_server.par` | ✓ | ✓ | — |
 | Claude Code | `claude` | ✓ | ✓ | `.claude/skills/` |
 | CodeBuddy | `codebuddy` | ✓ | ✓ | `.codebuddy/skills/` |
 | Codex | `codex` | ✓ | ✓ | `$CODEX_HOME/skills/` |
@@ -46,6 +47,8 @@ Multica 不会替代你使用的 AI 编程工具。运行时会调用电脑上�
 | Dim | `dim` | ✓ | ✓ | — |
 
 "Multica 管理 MCP" 表示你可以在智能体配置中填写 MCP server，由 Multica 在执行前传给对应工具。它不代表该工具本身没有其他 MCP 配置方式。
+
+Antigravity ACP 是 Google 提供的一个独立下载包（`agy_acp_server.par`，约 300 MB），并非 `agy` CLI，且没有 Intel Mac 的构建版本。用 `multica runtime install antigravity-acp` 安装后，需要先完成一次交互式 Google 登录，daemon 才会将其注册为健康的运行时；参见[安装 AI 编程工具](/install-agent-runtime)。
 
 ## 模型来源
 

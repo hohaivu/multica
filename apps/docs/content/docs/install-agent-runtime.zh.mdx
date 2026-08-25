@@ -42,6 +42,15 @@ Multica 当前会检测以下命令：
 
 "受支持"表示 Multica 能够调用对应 CLI，不代表 Multica 会替你提供该工具的账号、订阅或模型额度。
 
+Antigravity ACP 有所不同：它不是 Multica 在 `PATH` 中检测到的 CLI，而是 Google 为 Antigravity 提供的 ACP 服务器（`agy_acp_server.par`），与上面的 `agy` CLI 是独立的约 300MB 下载包，由守护进程负责安装：
+
+```bash
+multica runtime install antigravity-acp   # 首次约 300MB 下载；仅支持 Apple Silicon、Linux 或 Windows（没有 darwin-x86_64 构建）
+multica runtime auth antigravity-acp      # 首次交互式 Google 登录（会打开浏览器）
+```
+
+`install` 本身不会完成认证，`auth` 也不会自动运行——请在能够访问浏览器的终端中亲自执行。只有当二进制文件和凭据（来自 `runtime auth`，或环境变量中的 `GEMINI_API_KEY`/`GOOGLE_API_KEY`）都齐备后，守护进程才会注册该运行时。
+
 ## 2. 在本机完成登录
 
 安装后，先在终端中单独启动一次工具，并按照它自己的流程登录或配置模型服务。工具在终端中无法完成请求时，守护进程调用它同样会失败。

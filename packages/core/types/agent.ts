@@ -131,6 +131,7 @@ export const RUNTIME_PROFILE_PROTOCOL_FAMILIES = [
   "qwenpaw",
   "mcode",
   "zeroclaw",
+  "antigravityacp",
 ] as const;
 
 export type RuntimeProtocolFamily =

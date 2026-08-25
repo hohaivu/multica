@@ -294,6 +294,10 @@ export interface TaskMessagePayload {
   input?: Record<string, unknown>;
   output?: string;
   created_at?: string;
+  /** ACP tool call id, for exact tool_use/tool_result pairing. */
+  call_id?: string;
+  /** Terminal status for tool_result (e.g. "completed", "failed"). */
+  status?: string;
 }
 
 export interface TaskQueuedPayload {

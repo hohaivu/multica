@@ -285,6 +285,8 @@ export interface ChatTimelineItem {
   input?: Record<string, unknown>;
   output?: string;
   created_at?: string;
+  call_id?: string;
+  status?: string;
 }
 
 /**

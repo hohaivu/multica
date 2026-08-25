@@ -5683,6 +5683,78 @@ func TestExecuteAndDrain_RedactsNestedToolInputBeforeSending(t *testing.T) {
 	}
 }
 
+// failedToolCallBackend emits a tool_use/tool_result pair carrying an ACP
+// call id and a terminal "failed" status, the shape a rejected Antigravity
+// ACP tool call (e.g. read_file on a workspace path) takes.
+type failedToolCallBackend struct{}
+
+func (failedToolCallBackend) Execute(
+	_ context.Context,
+	_ string,
+	_ agent.ExecOptions,
+) (*agent.Session, error) {
+	msgCh := make(chan agent.Message, 2)
+	resCh := make(chan agent.Result, 1)
+
+	msgCh <- agent.Message{Type: agent.MessageToolUse, Tool: "read_file", CallID: "call-1"}
+	msgCh <- agent.Message{
+		Type:   agent.MessageToolResult,
+		Tool:   "read_file",
+		CallID: "call-1",
+		Status: "failed",
+		Output: "invalid tool call",
+	}
+	close(msgCh)
+	resCh <- agent.Result{Status: "completed", Output: "done"}
+	close(resCh)
+
+	return &agent.Session{Messages: msgCh, Result: resCh}, nil
+}
+
+// TestExecuteAndDrain_ReportsCallIDAndStatus pins the daemon side of the
+// call_id/status pipeline: agent.Message carries both all the way to the
+// daemon, and executeAndDrain must not drop them before they reach
+// TaskMessageData — otherwise the server (and the transcript) has no way to
+// pair a result to its exact call or to know it failed.
+func TestExecuteAndDrain_ReportsCallIDAndStatus(t *testing.T) {
+	t.Parallel()
+
+	d, rec := newTranscriptRecorder(t)
+
+	if _, _, err := d.executeAndDrain(
+		context.Background(),
+		failedToolCallBackend{},
+		"p",
+		agent.ExecOptions{},
+		slog.Default(),
+		"task-call-status",
+		"",
+		new(atomic.Int32),
+	); err != nil {
+		t.Fatalf("executeAndDrain: %v", err)
+	}
+
+	msgs := rec.snapshot()
+	var toolUse, toolResult *TaskMessageData
+	for i := range msgs {
+		switch msgs[i].Type {
+		case "tool_use":
+			toolUse = &msgs[i]
+		case "tool_result":
+			toolResult = &msgs[i]
+		}
+	}
+	if toolUse == nil || toolResult == nil {
+		t.Fatalf("expected both tool_use and tool_result reported, got: %+v", msgs)
+	}
+	if toolUse.CallID != "call-1" {
+		t.Fatalf("tool_use CallID = %q, want call-1", toolUse.CallID)
+	}
+	if toolResult.CallID != "call-1" || toolResult.Status != "failed" {
+		t.Fatalf("tool_result CallID/Status = %q/%q, want call-1/failed", toolResult.CallID, toolResult.Status)
+	}
+}
+
 // TestFreshSessionMayHelp pins the verdict for the Hermes auth-resolution
 // failure this PR treats as session poison, so the "fresh session is the
 // answer" gate can't be flipped by a future classifier change. The error is

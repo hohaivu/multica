@@ -61,23 +61,32 @@ func TestReportTaskMessagesPersistsWholeBatch(t *testing.T) {
 	testutil.Call(t, testHandler.ReportTaskMessages, batchMessagesRequest(t, taskID, []any{
 		map[string]any{"seq": 1, "type": "thinking", "content": "planning"},
 		map[string]any{
-			"seq":    2,
-			"type":   "tool_use",
-			"tool":   "fs_read",
-			"input":  map[string]any{"path": "/etc/hosts", "nested": map[string]any{"depth": 2}},
-			"output": "127.0.0.1 localhost",
+			"seq":     2,
+			"type":    "tool_use",
+			"tool":    "fs_read",
+			"input":   map[string]any{"path": "/etc/hosts", "nested": map[string]any{"depth": 2}},
+			"output":  "127.0.0.1 localhost",
+			"call_id": "call-1",
 		},
 		map[string]any{"seq": 3, "type": "text", "content": "done"},
+		map[string]any{
+			"seq":     4,
+			"type":    "tool_result",
+			"tool":    "fs_read",
+			"output":  "invalid tool call",
+			"call_id": "call-1",
+			"status":  "failed",
+		},
 	})).Want(http.StatusOK)
 
 	stored, err := testHandler.Queries.ListTaskMessages(ctx, util.MustParseUUID(taskID))
 	if err != nil {
 		t.Fatalf("list persisted task messages: %v", err)
 	}
-	if len(stored) != 3 {
-		t.Fatalf("persisted %d task messages, want 3", len(stored))
+	if len(stored) != 4 {
+		t.Fatalf("persisted %d task messages, want 4", len(stored))
 	}
-	for i, want := range []int32{1, 2, 3} {
+	for i, want := range []int32{1, 2, 3, 4} {
 		if stored[i].Seq != want {
 			t.Fatalf("row %d seq = %d, want %d", i, stored[i].Seq, want)
 		}
@@ -90,6 +99,11 @@ func TestReportTaskMessagesPersistsWholeBatch(t *testing.T) {
 	if stored[0].Tool.Valid || stored[0].Output.Valid || stored[0].Input != nil {
 		t.Fatalf("thinking row should have NULL tool/output/input, got %+v", stored[0])
 	}
+	// A message that never mentions call_id/status must NULLIF to SQL NULL,
+	// not persist an empty string.
+	if stored[0].CallID.Valid || stored[0].Status.Valid {
+		t.Fatalf("thinking row should have NULL call_id/status, got %+v", stored[0])
+	}
 	if stored[1].Tool.String != "fs_read" {
 		t.Fatalf("tool_use row tool = %q, want fs_read", stored[1].Tool.String)
 	}
@@ -98,6 +112,9 @@ func TestReportTaskMessagesPersistsWholeBatch(t *testing.T) {
 	}
 	if stored[1].Content.Valid {
 		t.Fatalf("tool_use row content should be NULL, got %q", stored[1].Content.String)
+	}
+	if stored[1].CallID.String != "call-1" {
+		t.Fatalf("tool_use row call_id = %q, want call-1", stored[1].CallID.String)
 	}
 	// The jsonb argument must arrive as an object, not as a string holding JSON,
 	// or `input->>'path'` stops resolving for every consumer of this column.
@@ -110,6 +127,9 @@ func TestReportTaskMessagesPersistsWholeBatch(t *testing.T) {
 	}
 	if stored[2].Type != "text" || stored[2].Content.String != "done" {
 		t.Fatalf("text row = %+v, want type=text content=done", stored[2])
+	}
+	if stored[3].CallID.String != "call-1" || stored[3].Status.String != "failed" {
+		t.Fatalf("tool_result row call_id/status = %+v, want call-1/failed", stored[3])
 	}
 }
 
@@ -138,6 +158,7 @@ func TestReportTaskMessagesPublishesInSeqOrder(t *testing.T) {
 
 	var mu sync.Mutex
 	var gotSeqs []int
+	var toolResultPayload *protocol.TaskMessagePayload
 	testHandler.Bus.Subscribe(protocol.EventTaskMessage, func(e events.Event) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -146,6 +167,10 @@ func TestReportTaskMessagesPublishesInSeqOrder(t *testing.T) {
 		}
 		if payload, ok := e.Payload.(protocol.TaskMessagePayload); ok {
 			gotSeqs = append(gotSeqs, payload.Seq)
+			if payload.Type == "tool_result" {
+				p := payload
+				toolResultPayload = &p
+			}
 		}
 	})
 
@@ -153,11 +178,18 @@ func TestReportTaskMessagesPublishesInSeqOrder(t *testing.T) {
 		map[string]any{"seq": 3, "type": "text", "content": "third"},
 		map[string]any{"seq": 1, "type": "text", "content": "first"},
 		map[string]any{"seq": 2, "type": "text", "content": "second"},
+		map[string]any{
+			"seq":     4,
+			"type":    "tool_result",
+			"tool":    "fs_read",
+			"call_id": "call-2",
+			"status":  "failed",
+		},
 	})).Want(http.StatusOK)
 
 	mu.Lock()
 	defer mu.Unlock()
-	want := []int{1, 2, 3}
+	want := []int{1, 2, 3, 4}
 	if len(gotSeqs) != len(want) {
 		t.Fatalf("published %v task:message events, want seqs %v", gotSeqs, want)
 	}
@@ -167,6 +199,16 @@ func TestReportTaskMessagesPublishesInSeqOrder(t *testing.T) {
 				"events in arrival order, so the transcript would show the batch scrambled",
 				gotSeqs, want)
 		}
+	}
+	// call_id and status must reach the realtime payload, not just the row —
+	// this is what lets the transcript pair the result to its exact call and
+	// render it as failed instead of an ordinary successful call.
+	if toolResultPayload == nil {
+		t.Fatal("no tool_result event published")
+	}
+	if toolResultPayload.CallID != "call-2" || toolResultPayload.Status != "failed" {
+		t.Fatalf("tool_result payload call_id/status = %q/%q, want call-2/failed",
+			toolResultPayload.CallID, toolResultPayload.Status)
 	}
 }
 

@@ -278,6 +278,20 @@ var probeAgentCLIs = func() map[string]AgentEntry {
 	if e, ok := probe("MULTICA_ZEROCLAW_PATH", "zeroclaw", ""); ok {
 		agents["zeroclaw"] = e
 	}
+	// The Antigravity ACP server is a separate ~300MB Google download, not
+	// the agy CLI (see server/pkg/agent/antigravity_acp.go). It is acquired
+	// explicitly via `multica runtime install antigravity-acp`, never at
+	// daemon startup; managedACPServerPath() only stats local files, so this
+	// costs nothing when it isn't installed. MULTICA_ANTIGRAVITY_ACP_PATH
+	// bypasses managed acquisition entirely. Registration also requires a
+	// stored credential — a binary with none would fail session/new on
+	// every task (see antigravityACPCredentialsPresent). It takes no model env
+	// var: the backend never calls session/set_model, so ExecOptions.Model is
+	// ignored — see ModelSelectionSupported. Reading one here would only
+	// advertise a knob that silently does nothing.
+	if e, ok := probe("MULTICA_ANTIGRAVITY_ACP_PATH", managedACPServerPath(), ""); ok && antigravityACPCredentialsPresent() {
+		agents["antigravityacp"] = e
+	}
 	return agents
 }
 

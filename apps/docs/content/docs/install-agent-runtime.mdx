@@ -42,6 +42,15 @@ Multica currently detects these commands:
 
 "Supported" means Multica can invoke that CLI. It does not mean Multica provides the tool's account, subscription, or model quota for you.
 
+Antigravity ACP is different: it isn't a CLI Multica detects on `PATH`. It's Google's ACP server for Antigravity (`agy_acp_server.par`), a separate ~300MB download from the `agy` CLI above, and the daemon installs it for you:
+
+```bash
+multica runtime install antigravity-acp   # one-time ~300MB download; Apple Silicon, Linux, or Windows only — no darwin-x86_64 build
+multica runtime auth antigravity-acp      # one-time interactive Google login (opens a browser)
+```
+
+`install` never authenticates by itself, and `auth` never runs automatically — run it yourself at a terminal that can reach a browser. The daemon registers the runtime only once both the binary and credentials (from `runtime auth`, or `GEMINI_API_KEY`/`GOOGLE_API_KEY` in the environment) are present.
+
 ## 2. Sign in on your machine
 
 After installing, launch the tool once in a terminal on its own and complete its sign-in or model provider setup. If the tool cannot complete requests in the terminal, the daemon's invocations fail the same way.

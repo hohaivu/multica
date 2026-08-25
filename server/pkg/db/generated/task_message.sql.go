@@ -14,7 +14,7 @@ import (
 const createTaskMessage = `-- name: CreateTaskMessage :one
 INSERT INTO task_message (id, task_id, seq, type, tool, content, input, output)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, task_id, seq, type, tool, content, input, output, created_at
+RETURNING id, task_id, seq, type, tool, content, input, output, created_at, call_id, status
 `
 
 type CreateTaskMessageParams struct {
@@ -50,6 +50,8 @@ func (q *Queries) CreateTaskMessage(ctx context.Context, arg CreateTaskMessagePa
 		&i.Input,
 		&i.Output,
 		&i.CreatedAt,
+		&i.CallID,
+		&i.Status,
 	)
 	return i, err
 }
@@ -68,22 +70,26 @@ WITH incoming AS (
         unnest($4::text[]) AS tool,
         unnest($5::text[]) AS content,
         unnest($6::text[]) AS input,
-        unnest($7::text[]) AS output
+        unnest($7::text[]) AS output,
+        unnest($8::text[]) AS call_id,
+        unnest($9::text[]) AS status
 ), inserted AS (
-    INSERT INTO task_message (id, task_id, seq, type, tool, content, input, output)
+    INSERT INTO task_message (id, task_id, seq, type, tool, content, input, output, call_id, status)
     SELECT
         m.id,
-        $8::uuid,
+        $10::uuid,
         m.seq,
         m.type,
         NULLIF(m.tool, ''),
         NULLIF(m.content, ''),
         NULLIF(m.input, '')::jsonb,
-        NULLIF(m.output, '')
+        NULLIF(m.output, ''),
+        NULLIF(m.call_id, ''),
+        NULLIF(m.status, '')
     FROM incoming AS m
-    RETURNING id, task_id, seq, type, tool, content, input, output, created_at
+    RETURNING id, task_id, seq, type, tool, content, input, output, created_at, call_id, status
 )
-SELECT id, task_id, seq, type, tool, content, input, output, created_at FROM inserted ORDER BY seq ASC
+SELECT id, task_id, seq, type, tool, content, input, output, created_at, call_id, status FROM inserted ORDER BY seq ASC
 `
 
 type CreateTaskMessagesParams struct {
@@ -94,6 +100,8 @@ type CreateTaskMessagesParams struct {
 	Contents []string      `json:"contents"`
 	Inputs   []string      `json:"inputs"`
 	Outputs  []string      `json:"outputs"`
+	CallIds  []string      `json:"call_ids"`
+	Statuses []string      `json:"statuses"`
 	TaskID   pgtype.UUID   `json:"task_id"`
 }
 
@@ -107,6 +115,8 @@ type CreateTaskMessagesRow struct {
 	Input     []byte             `json:"input"`
 	Output    pgtype.Text        `json:"output"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	CallID    pgtype.Text        `json:"call_id"`
+	Status    pgtype.Text        `json:"status"`
 }
 
 // Batch variant of CreateTaskMessage: persists a whole daemon-reported batch in
@@ -157,6 +167,8 @@ func (q *Queries) CreateTaskMessages(ctx context.Context, arg CreateTaskMessages
 		arg.Contents,
 		arg.Inputs,
 		arg.Outputs,
+		arg.CallIds,
+		arg.Statuses,
 		arg.TaskID,
 	)
 	if err != nil {
@@ -176,6 +188,8 @@ func (q *Queries) CreateTaskMessages(ctx context.Context, arg CreateTaskMessages
 			&i.Input,
 			&i.Output,
 			&i.CreatedAt,
+			&i.CallID,
+			&i.Status,
 		); err != nil {
 			return nil, err
 		}
@@ -198,7 +212,7 @@ func (q *Queries) DeleteTaskMessages(ctx context.Context, taskID pgtype.UUID) er
 }
 
 const listTaskMessages = `-- name: ListTaskMessages :many
-SELECT id, task_id, seq, type, tool, content, input, output, created_at FROM task_message
+SELECT id, task_id, seq, type, tool, content, input, output, created_at, call_id, status FROM task_message
 WHERE task_id = $1
 ORDER BY seq ASC
 `
@@ -222,6 +236,8 @@ func (q *Queries) ListTaskMessages(ctx context.Context, taskID pgtype.UUID) ([]T
 			&i.Input,
 			&i.Output,
 			&i.CreatedAt,
+			&i.CallID,
+			&i.Status,
 		); err != nil {
 			return nil, err
 		}
@@ -234,7 +250,7 @@ func (q *Queries) ListTaskMessages(ctx context.Context, taskID pgtype.UUID) ([]T
 }
 
 const listTaskMessagesSince = `-- name: ListTaskMessagesSince :many
-SELECT id, task_id, seq, type, tool, content, input, output, created_at FROM task_message
+SELECT id, task_id, seq, type, tool, content, input, output, created_at, call_id, status FROM task_message
 WHERE task_id = $1 AND seq > $2
 ORDER BY seq ASC
 `
@@ -263,6 +279,8 @@ func (q *Queries) ListTaskMessagesSince(ctx context.Context, arg ListTaskMessage
 			&i.Input,
 			&i.Output,
 			&i.CreatedAt,
+			&i.CallID,
+			&i.Status,
 		); err != nil {
 			return nil, err
 		}

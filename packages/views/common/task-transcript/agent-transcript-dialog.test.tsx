@@ -420,6 +420,33 @@ describe("AgentTranscriptDialog", () => {
     expect(screen.getByText("/c.ts")).toBeInTheDocument();
   });
 
+  // A failed tool call (e.g. Antigravity's `read_file` rejecting a workspace
+  // path) used to render identically to an ordinary successful call once its
+  // result landed. The full status → pairing matrix is covered in
+  // build-steps.test.ts; this is the rendering regression.
+  it("renders a failed tool call with the destructive treatment", () => {
+    renderDialog([
+      { seq: 1, type: "tool_use", tool: "read_file", input: { file_path: "/workdir/reply.md" } },
+      { seq: 2, type: "tool_result", tool: "read_file", output: "invalid tool call", status: "failed" },
+    ]);
+
+    expect(screen.getByRole("button", { name: /^read_file/ })).toHaveClass("bg-destructive/5");
+  });
+
+  it("tints a folded group when one of its calls failed", () => {
+    renderDialog([
+      { seq: 1, type: "tool_use", tool: "read_file", input: { file_path: "/a.md" } },
+      { seq: 2, type: "tool_result", tool: "read_file", output: "ok" },
+      { seq: 3, type: "tool_use", tool: "read_file", input: { file_path: "/b.md" } },
+      { seq: 4, type: "tool_result", tool: "read_file", output: "invalid tool call", status: "failed" },
+      { seq: 5, type: "tool_use", tool: "read_file", input: { file_path: "/c.md" } },
+      { seq: 6, type: "tool_result", tool: "read_file", output: "ok" },
+    ]);
+
+    const group = screen.getByRole("button", { name: /\/a\.md.*3 calls/ });
+    expect(group.parentElement).toHaveClass("bg-destructive/5");
+  });
+
   it("narrows the list to steps matching the search", () => {
     renderDialog();
 
