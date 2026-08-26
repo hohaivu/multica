@@ -408,6 +408,7 @@ func (b *opencodeBackend) processEvents(r io.Reader, ch chan<- Message) eventRes
 	stepProducedOutput := false // current step emitted text, a tool call, or reported usage
 	lastStepVoid := false       // the most recently closed step produced nothing at all
 	var todos []opencodeTodo
+	todoWriteFailed := false
 	sawToolCall := false
 
 	scanner := newAgentStreamScanner(r)
@@ -439,9 +440,17 @@ func (b *opencodeBackend) processEvents(r io.Reader, ch chan<- Message) eventRes
 			b.handleToolUseEvent(event, ch)
 			sawToolCall = true
 			if event.Part.Tool == "todowrite" && event.Part.State != nil {
-				var input opencodeTodoInput
-				if err := json.Unmarshal(event.Part.State.Input, &input); err == nil {
-					todos = input.Todos
+				switch event.Part.State.Status {
+				case "completed":
+					var input opencodeTodoInput
+					if err := json.Unmarshal(event.Part.State.Input, &input); err == nil {
+						todos = input.Todos
+						todoWriteFailed = false
+					}
+				case "error":
+					// A rejected update is not authoritative; keep the last
+					// successful snapshot and fail closed at EOF.
+					todoWriteFailed = true
 				}
 			}
 			stepProducedOutput = true
@@ -542,6 +551,10 @@ func (b *opencodeBackend) processEvents(r io.Reader, ch chan<- Message) eventRes
 			}
 			finalStatus = "incomplete_todos"
 			finalError = fmt.Sprintf("opencode stopped with %d incomplete todo(s): %s", len(incomplete), details.String())
+			trySend(ch, Message{Type: MessageError, Content: finalError})
+		} else if todoWriteFailed {
+			finalStatus = "incomplete_todos"
+			finalError = "opencode's last todowrite failed; final todo state is unknown"
 			trySend(ch, Message{Type: MessageError, Content: finalError})
 		} else if finalOutput == "" && sawStepFinish && !sawToolCall {
 			finalStatus = "failed"

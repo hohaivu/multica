@@ -583,6 +583,47 @@ func TestOpencodeProcessEventsCompletedTodosStayCompleted(t *testing.T) {
 	}
 }
 
+func TestOpencodeProcessEventsFailedTodoWriteKeepsPendingSnapshot(t *testing.T) {
+	b := &opencodeBackend{cfg: Config{Logger: slog.Default()}}
+	stream := strings.Join([]string{
+		`{"type":"step_start","sessionID":"ses_todo","part":{}}`,
+		`{"type":"tool_use","sessionID":"ses_todo","part":{"tool":"todowrite","metadata":{"providerExecuted":true},"state":{"status":"completed","input":{"todos":[{"content":"pending work","status":"pending"}]}}}}`,
+		`{"type":"tool_use","sessionID":"ses_todo","part":{"tool":"todowrite","metadata":{"providerExecuted":true},"state":{"status":"error","input":{"todos":[{"content":"pending work","status":"completed"}]}}}}`,
+		`{"type":"step_finish","sessionID":"ses_todo","part":{"reason":"stop","tokens":{"input":1}}}`,
+	}, "\n")
+	result := b.processEvents(strings.NewReader(stream), make(chan Message, 10))
+	if result.status != "incomplete_todos" || !strings.Contains(result.errMsg, `"pending work" (pending)`) {
+		t.Fatalf("result = %+v, want preserved pending todo", result)
+	}
+}
+
+func TestOpencodeProcessEventsFailedTodoWriteWithoutSnapshotFailsClosed(t *testing.T) {
+	b := &opencodeBackend{cfg: Config{Logger: slog.Default()}}
+	stream := strings.Join([]string{
+		`{"type":"step_start","sessionID":"ses_todo","part":{}}`,
+		`{"type":"tool_use","sessionID":"ses_todo","part":{"tool":"todowrite","metadata":{"providerExecuted":true},"state":{"status":"error","input":{"todos":[{"content":"work","status":"completed"}]}}}}`,
+		`{"type":"step_finish","sessionID":"ses_todo","part":{"reason":"stop","tokens":{"input":1}}}`,
+	}, "\n")
+	result := b.processEvents(strings.NewReader(stream), make(chan Message, 10))
+	if result.status == "completed" || !strings.Contains(result.errMsg, "final todo state is unknown") {
+		t.Fatalf("result = %+v, want diagnostic failure", result)
+	}
+}
+
+func TestOpencodeProcessEventsSuccessfulTodoWriteClearsFailure(t *testing.T) {
+	b := &opencodeBackend{cfg: Config{Logger: slog.Default()}}
+	stream := strings.Join([]string{
+		`{"type":"step_start","sessionID":"ses_todo","part":{}}`,
+		`{"type":"tool_use","sessionID":"ses_todo","part":{"tool":"todowrite","metadata":{"providerExecuted":true},"state":{"status":"error","input":{"todos":[]}}}}`,
+		`{"type":"tool_use","sessionID":"ses_todo","part":{"tool":"todowrite","metadata":{"providerExecuted":true},"state":{"status":"completed","input":{"todos":[{"content":"work","status":"completed"}]}}}}`,
+		`{"type":"step_finish","sessionID":"ses_todo","part":{"reason":"stop","tokens":{"input":1}}}`,
+	}, "\n")
+	result := b.processEvents(strings.NewReader(stream), make(chan Message, 10))
+	if result.status != "completed" {
+		t.Fatalf("status = %q, want completed", result.status)
+	}
+}
+
 func TestOpencodeProcessEventsEmptyOutputWithoutToolsFails(t *testing.T) {
 	b := &opencodeBackend{cfg: Config{Logger: slog.Default()}}
 	stream := strings.Join([]string{

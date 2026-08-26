@@ -7998,15 +7998,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			Usage:         usageEntries,
 		}, nil
 	case "incomplete_todos":
-		return TaskResult{
-			Status:        "blocked",
-			Comment:       result.Error,
-			SessionID:     result.SessionID,
-			WorkDir:       env.WorkDir,
-			EnvRoot:       env.RootDir,
-			FailureReason: "opencode_incomplete_todos",
-			Usage:         usageEntries,
-		}, nil
+		return incompleteTodosTaskResult(result, env, usageEntries), nil
 	case "cancelled":
 		// Server cancelled the task (e.g. issue reassignment, user cancel).
 		// handleTask's cancelledByPoll branch already discards this result,
@@ -8099,6 +8091,20 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			Usage:         usageEntries,
 			FailureReason: failureReason,
 		}, nil
+	}
+}
+
+// incompleteTodosTaskResult maps OpenCode's incomplete_todos verdict onto the
+// blocked disposition without requiring a full runTask setup in tests.
+func incompleteTodosTaskResult(result agent.Result, env *execenv.Environment, usageEntries []TaskUsageEntry) TaskResult {
+	return TaskResult{
+		Status:        "blocked",
+		Comment:       result.Error,
+		SessionID:     result.SessionID,
+		WorkDir:       env.WorkDir,
+		EnvRoot:       env.RootDir,
+		FailureReason: "opencode_incomplete_todos",
+		Usage:         usageEntries,
 	}
 }
 

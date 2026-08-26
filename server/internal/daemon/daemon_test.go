@@ -3086,6 +3086,20 @@ func TestShouldRetryWithFreshSession(t *testing.T) {
 	}
 }
 
+func TestIncompleteTodosTaskResult(t *testing.T) {
+	result := agent.Result{Status: "incomplete_todos", Error: "remaining todos", SessionID: "session-1"}
+	env := &execenv.Environment{WorkDir: "/work", RootDir: "/root"}
+	usage := []TaskUsageEntry{{Model: "model", InputTokens: 1}}
+
+	got := incompleteTodosTaskResult(result, env, usage)
+	if got.Status != "blocked" || got.FailureReason != "opencode_incomplete_todos" || got.Comment != result.Error {
+		t.Fatalf("got %+v, want blocked incomplete-todos result", got)
+	}
+	if got.SessionID != result.SessionID || got.WorkDir != env.WorkDir || got.EnvRoot != env.RootDir {
+		t.Fatalf("got %+v, want session/workdir/env root preserved", got)
+	}
+}
+
 // The compatibility path must be reachable ONLY by backends that cannot
 // report a rejection. One identical result, opposite answers: a backend that
 // can detect has already said "not a rejection" by leaving ResumeRejected
