@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/integrations/vcs"
 	"github.com/multica-ai/multica/server/internal/middleware"
@@ -158,10 +160,14 @@ func (h *Handler) ListGitLabTargets(w http.ResponseWriter, r *http.Request) {
 		writeGitLabUpstreamError(w, err, "could not list GitLab projects")
 		return
 	}
-	groups, _, err := vcs.GitLabListGroups(r.Context(), conn.InstanceUrl, cred, page, per)
+	groups, groupsNext, err := vcs.GitLabListGroups(r.Context(), conn.InstanceUrl, cred, page, per)
 	if err != nil {
 		writeGitLabUpstreamError(w, err, "could not list GitLab groups")
 		return
+	}
+	// Both lists use the same page, so continue until the larger cursor is exhausted.
+	if groupsNext > next {
+		next = groupsNext
 	}
 	writeJSON(w, 200, map[string]any{"projects": projects, "groups": groups, "next_page": next})
 }
@@ -246,14 +252,37 @@ func (h *Handler) DeleteVCSWebhookRegistration(w http.ResponseWriter, r *http.Re
 	if !ok {
 		return
 	}
-	target, _ := strconv.ParseInt(chi.URLParam(r, "targetId"), 10, 64)
-	row, err := h.Queries.GetVCSWebhookRegistration(r.Context(), db.GetVCSWebhookRegistrationParams{ConnectionID: conn.ID, Scope: chi.URLParam(r, "scope"), TargetID: target})
-	if err == nil {
-		if cred, credErr := h.gitlabAccessToken(r.Context(), conn); credErr == nil {
-			_ = vcs.GitLabDeleteHook(r.Context(), conn.InstanceUrl, cred, row.Scope, row.TargetID, row.HookID)
-		}
+	scope := chi.URLParam(r, "scope")
+	if scope != "project" && scope != "group" {
+		writeError(w, http.StatusBadRequest, "invalid scope")
+		return
 	}
-	_ = h.Queries.DeleteVCSWebhookRegistration(r.Context(), db.DeleteVCSWebhookRegistrationParams{ConnectionID: conn.ID, Scope: chi.URLParam(r, "scope"), TargetID: target})
+	target, err := strconv.ParseInt(chi.URLParam(r, "targetId"), 10, 64)
+	if err != nil || target < 1 {
+		writeError(w, http.StatusBadRequest, "invalid target id")
+		return
+	}
+	row, err := h.Queries.GetVCSWebhookRegistration(r.Context(), db.GetVCSWebhookRegistrationParams{ConnectionID: conn.ID, Scope: scope, TargetID: target})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "webhook registration not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to find webhook registration")
+		return
+	}
+	cred, err := h.gitlabAccessToken(r.Context(), conn)
+	if err != nil {
+		writeGitLabCredentialError(w, err)
+		return
+	}
+	if err := vcs.GitLabDeleteHook(r.Context(), conn.InstanceUrl, cred, row.Scope, row.TargetID, row.HookID); err != nil {
+		slog.Warn("failed to delete GitLab webhook; deleting local registration", "connection_id", uuidToString(conn.ID), "hook_id", row.HookID, "error", err)
+	}
+	if err := h.Queries.DeleteVCSWebhookRegistration(r.Context(), db.DeleteVCSWebhookRegistrationParams{ConnectionID: conn.ID, Scope: scope, TargetID: target}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete webhook registration")
+		return
+	}
 	w.WriteHeader(204)
 }
 
@@ -322,9 +351,13 @@ func writeGitLabUpstreamError(w http.ResponseWriter, err error, fallback string)
 }
 func writeGitLabHookError(w http.ResponseWriter, err error, scope string) {
 	var se vcs.StatusError
-	if errors.As(err, &se) && (se.Status == 401 || se.Status == 403) {
-		if scope == "group" && se.Status == 403 {
+	if errors.As(err, &se) {
+		if scope == "group" && (se.Status == 403 || se.Status == 404) {
 			writeError(w, 400, "group webhooks require GitLab Premium; pick a project instead")
+			return
+		}
+		if se.Status != 401 && se.Status != 403 {
+			writeError(w, 502, "GitLab upstream error")
 			return
 		}
 		writeError(w, 409, "reconnect GitLab")
