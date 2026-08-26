@@ -9,14 +9,18 @@ import (
 )
 
 type opencodeExportResult struct {
-	output string
-	usage  TokenUsage
+	output     string
+	usage      TokenUsage
+	providerID string
+	modelID    string
 }
 
 func (b *opencodeBackend) exportSession(parent context.Context, executable string, opts ExecOptions, sessionID string, env []string) (opencodeExportResult, error) {
-	ctx, cancel := context.WithTimeout(parent, 3*time.Second)
+	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 	defer cancel()
-	cmd := b.cfg.commandAt(executable).exec(ctx, "export", "--format", "json", "--session", sessionID)
+	// export takes the session ID positionally; cwd/PWD scopes it to the run's project.
+	cmd := b.cfg.commandAt(executable).exec(ctx, "export", sessionID)
+	hideAgentWindow(cmd)
 	cmd.Dir = opts.Cwd
 	cmd.Env = env
 	cmd.Stdin = strings.NewReader("")
@@ -24,41 +28,55 @@ func (b *opencodeBackend) exportSession(parent context.Context, executable strin
 	if err != nil {
 		return opencodeExportResult{}, err
 	}
+	return parseOpencodeExport(data)
+}
+
+func parseOpencodeExport(data []byte) (opencodeExportResult, error) {
 	var transcript struct {
 		Messages []struct {
-			Role  string `json:"role"`
-			Parts []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			} `json:"parts"`
+			Info struct {
+				Role       string          `json:"role"`
+				Tokens     *opencodeTokens `json:"tokens,omitempty"`
+				ProviderID string          `json:"providerID,omitempty"`
+				ModelID    string          `json:"modelID,omitempty"`
+			} `json:"info"`
+			Parts []opencodeEventPart `json:"parts"`
 		} `json:"messages"`
-		Usage *opencodeTokens `json:"usage,omitempty"`
 	}
 	if err := json.Unmarshal(data, &transcript); err != nil {
 		return opencodeExportResult{}, fmt.Errorf("parse export: %w", err)
 	}
-	var reasoning strings.Builder
-	for i := len(transcript.Messages) - 1; i >= 0; i-- {
-		if transcript.Messages[i].Role != "assistant" {
-			continue
-		}
-		var output strings.Builder
-		for _, part := range transcript.Messages[i].Parts {
-			if part.Type == "text" {
-				output.WriteString(part.Text)
-			}
-			if part.Type == "reasoning" {
-				reasoning.WriteString(part.Text)
-			}
-		}
-		if text := strings.TrimSpace(output.String()); text != "" {
-			return opencodeExportResult{output: text, usage: exportUsage(transcript.Usage)}, nil
+	selected := -1
+	for i := range transcript.Messages {
+		if transcript.Messages[i].Info.Role == "assistant" {
+			selected = i
 		}
 	}
-	if output := strings.TrimSpace(reasoning.String()); output != "" {
-		return opencodeExportResult{output: output, usage: exportUsage(transcript.Usage)}, nil
+	if selected < 0 {
+		return opencodeExportResult{}, fmt.Errorf("export contains no assistant text")
 	}
-	return opencodeExportResult{}, fmt.Errorf("export contains no assistant text")
+	var text, reasoning strings.Builder
+	message := transcript.Messages[selected]
+	for _, part := range message.Parts {
+		if part.Type == "text" {
+			text.WriteString(part.Text)
+		} else if part.Type == "reasoning" {
+			reasoning.WriteString(part.Text)
+		}
+	}
+	output := strings.TrimSpace(text.String())
+	if output == "" {
+		output = strings.TrimSpace(reasoning.String())
+	}
+	if output == "" {
+		return opencodeExportResult{}, fmt.Errorf("export contains no assistant text")
+	}
+	return opencodeExportResult{
+		output:     output,
+		usage:      exportUsage(message.Info.Tokens),
+		providerID: message.Info.ProviderID,
+		modelID:    message.Info.ModelID,
+	}, nil
 }
 
 func exportUsage(t *opencodeTokens) TokenUsage {
