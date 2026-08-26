@@ -49,7 +49,8 @@ export const FAILURE_REASON_I18N_KEYS = {
   agent_fallback_message: "agent_fallback_message",
   codex_semantic_inactivity: "codex_semantic_inactivity",
   codex_resume_oversized: "codex_resume_oversized",
-  idle_watchdog: "idle_watchdog",
+	idle_watchdog: "idle_watchdog",
+	opencode_incomplete_todos: "opencode_incomplete_todos",
   local_directory_error: "local_directory_error",
   cancelled: "cancelled",
 

@@ -787,6 +787,7 @@
       "agent_fallback_message": "エージェントがフォールバックメッセージを返しました",
       "codex_resume_oversized": "セッションが大きすぎて再開できません",
       "idle_watchdog": "エージェントが長時間応答しなかったため停止しました",
+      "opencode_incomplete_todos": "OpenCode が未完了の todo を残して停止しました",
       "local_directory_error": "ローカルディレクトリエラー",
       "cancelled": "システムによってキャンセルされました",
       "agent_error": "エージェント実行エラー",

@@ -351,6 +351,15 @@ type eventResult struct {
 	sawTerminalSignal bool
 }
 
+type opencodeTodo struct {
+	Content string `json:"content"`
+	Status  string `json:"status"`
+}
+
+type opencodeTodoInput struct {
+	Todos []opencodeTodo `json:"todos"`
+}
+
 // processEvents reads JSON lines from r, dispatches events to ch, and returns
 // the accumulated result. This is the core scanner loop, extracted for testability.
 func (b *opencodeBackend) processEvents(r io.Reader, ch chan<- Message) eventResult {
@@ -381,6 +390,9 @@ func (b *opencodeBackend) processEvents(r io.Reader, ch chan<- Message) eventRes
 	stepHasContinuationTool := false // current step has a local tool result OpenCode must feed back
 	awaitingContinuation := false    // the last step_finish still required another step
 	sawStepFinish := false           // at least one step closed; see eventResult.sawTerminalSignal
+	sawToolCall := false
+	var todos []opencodeTodo
+	finalOutput := ""
 
 	// Step bracketing still misses a third shape: a step that opens and closes
 	// cleanly while carrying nothing at all — no text, no tool call, and no
@@ -426,6 +438,13 @@ func (b *opencodeBackend) processEvents(r io.Reader, ch chan<- Message) eventRes
 			b.handleReasoningEvent(event, ch, &reasoning)
 		case "tool_use":
 			b.handleToolUseEvent(event, ch)
+			sawToolCall = true
+			if event.Part.Tool == "todowrite" && event.Part.State != nil {
+				var input opencodeTodoInput
+				if err := json.Unmarshal(event.Part.State.Input, &input); err == nil {
+					todos = input.Todos
+				}
+			}
 			stepProducedOutput = true
 			if event.Part.Metadata == nil || !event.Part.Metadata.ProviderExecuted {
 				stepHasContinuationTool = true
@@ -494,6 +513,28 @@ func (b *opencodeBackend) processEvents(r io.Reader, ch chan<- Message) eventRes
 			finalError = "opencode stream ended on an empty step (no text, no tool call, no reported usage) — the provider produced nothing"
 			noTerminalSignal = true
 		}
+		if len(todos) > 0 {
+			var incomplete []string
+			for _, todo := range todos {
+				if todo.Status != "completed" && todo.Status != "cancelled" {
+					incomplete = append(incomplete, fmt.Sprintf("%s: %s", todo.Status, todo.Content))
+				}
+			}
+			if len(incomplete) > 0 {
+				finalStatus = "incomplete_todos"
+				finalError = fmt.Sprintf("opencode stopped with %d incomplete todo(s): %s", len(incomplete), strings.Join(incomplete, "; "))
+				trySend(ch, Message{Type: MessageError, Content: finalError})
+			}
+		}
+		finalOutput = strings.TrimSpace(output.String())
+		if finalOutput == "" {
+			finalOutput = strings.TrimSpace(reasoning.String())
+		}
+		if finalStatus == "completed" && finalOutput == "" && sawStepFinish && !sawToolCall {
+			finalStatus = "failed"
+			finalError = "opencode returned empty output after a completed step"
+			trySend(ch, Message{Type: MessageError, Content: finalError})
+		}
 	}
 
 	// OpenCode reasoning models (e.g. hy3-free) stream their final answer as
@@ -501,7 +542,7 @@ func (b *opencodeBackend) processEvents(r io.Reader, ch chan<- Message) eventRes
 	// run produced no text output but did produce reasoning, promote the
 	// reasoning to the deliverable output so a completed run is not reported
 	// with an empty Result.Output.
-	finalOutput := strings.TrimSpace(output.String())
+	finalOutput = strings.TrimSpace(output.String())
 	if finalOutput == "" {
 		if rb := strings.TrimSpace(reasoning.String()); rb != "" {
 			finalOutput = rb

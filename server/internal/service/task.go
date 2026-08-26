@@ -4684,7 +4684,8 @@ var retryableReasons = map[string]bool{
 	// idle_watchdog is the daemon force-stopping a run whose backend went
 	// silent (VUH-132: a real stall, not a poisoned session) — retryable and
 	// resume-safe for the same reason as provider_network below.
-	"idle_watchdog": true,
+	"idle_watchdog":                                  true,
+	"opencode_incomplete_todos":                      true,
 	string(taskfailure.ReasonAgentProviderNetwork):   true,
 	string(taskfailure.ReasonSkillBundleUnavailable): true,
 }
