@@ -304,6 +304,25 @@ func (b *opencodeBackend) Execute(ctx context.Context, prompt string, opts ExecO
 			scanResult.status = "failed"
 		}
 
+		if scanResult.output == "" && scanResult.sessionID != "" && scanResult.emptyStreamGuard && !scanResult.sawErrorEvent &&
+			runCtx.Err() == nil && ctx.Err() == nil {
+			if recovered, exportErr := b.exportSession(ctx, execPath, opts, scanResult.sessionID, env); exportErr == nil {
+				scanResult.output = recovered.output
+				scanResult.errMsg = ""
+				scanResult.status = "completed"
+				if scanResult.usage == (TokenUsage{}) {
+					scanResult.usage = recovered.usage
+				}
+				scanResult.providerID = recovered.providerID
+				scanResult.modelID = recovered.modelID
+				trySend(msgCh, Message{Type: MessageText, Content: recovered.output})
+				trySend(msgCh, Message{Type: MessageStatus, Status: "completed", SessionID: scanResult.sessionID})
+			} else {
+				b.cfg.Logger.Warn("opencode session export fallback failed", "sessionID", scanResult.sessionID, "error", exportErr)
+				trySend(msgCh, Message{Type: MessageError, Content: scanResult.errMsg})
+			}
+		}
+
 		b.cfg.Logger.Info("opencode finished", "pid", cmd.Process.Pid, "status", scanResult.status, "duration", duration.Round(time.Millisecond).String())
 
 		// Build usage map. OpenCode doesn't report model per-step, so we
@@ -313,7 +332,10 @@ func (b *opencodeBackend) Execute(ctx context.Context, prompt string, opts ExecO
 		if u.InputTokens > 0 || u.OutputTokens > 0 || u.CacheReadTokens > 0 || u.CacheWriteTokens > 0 {
 			model := opts.Model
 			if model == "" {
-				model = "unknown"
+				model = scanResult.providerID + "/" + scanResult.modelID
+				if model == "/" {
+					model = "unknown"
+				}
 			}
 			usage = map[string]TokenUsage{model: u}
 		}
@@ -340,7 +362,11 @@ type eventResult struct {
 	output           string
 	sessionID        string
 	usage            TokenUsage // accumulated token usage across all steps
-	noTerminalSignal bool       // guard fired: the stream ended without evidence the run actually finished
+	providerID       string
+	modelID          string
+	noTerminalSignal bool // guard fired: the stream ended without evidence the run actually finished
+	emptyStreamGuard bool // one of the empty-output demotions fired
+	sawErrorEvent    bool
 	// sawTerminalSignal is positive evidence that the run actually finished: a
 	// step_finish closed the last step with no continuation pending and with
 	// something to show for it. It is NOT the negation of noTerminalSignal — a
@@ -365,6 +391,7 @@ type opencodeTodoInput struct {
 func (b *opencodeBackend) processEvents(r io.Reader, ch chan<- Message) eventResult {
 	var output strings.Builder
 	var reasoning strings.Builder
+	sawErrorEvent := false
 	var sessionID string
 	var usage TokenUsage
 	finalStatus := "completed"
@@ -458,6 +485,7 @@ func (b *opencodeBackend) processEvents(r io.Reader, ch chan<- Message) eventRes
 				stepHasContinuationTool = true
 			}
 		case "error":
+			sawErrorEvent = true
 			b.handleErrorEvent(event, ch, &finalStatus, &finalError)
 		case "step_start":
 			openStep = true
@@ -506,20 +534,24 @@ func (b *opencodeBackend) processEvents(r io.Reader, ch chan<- Message) eventRes
 	// `opencode run` exited without emitting an error event. Fail closed on
 	// that structural evidence rather than reporting a false-green completion.
 	noTerminalSignal := false
+	emptyStreamGuard := false
 	if finalStatus == "completed" {
 		switch {
 		case openStep:
 			finalStatus = "failed"
 			finalError = "opencode stream ended without a terminal signal (step still open at EOF)"
 			noTerminalSignal = true
+			emptyStreamGuard = true
 		case awaitingContinuation:
 			finalStatus = "failed"
 			finalError = "opencode stream ended without a terminal signal (last step required a continuation that never started)"
 			noTerminalSignal = true
+			emptyStreamGuard = true
 		case lastStepVoid:
 			finalStatus = "failed"
 			finalError = "opencode stream ended on an empty step (no text, no tool call, no reported usage) — the provider produced nothing"
 			noTerminalSignal = true
+			emptyStreamGuard = true
 		}
 	}
 
@@ -559,7 +591,7 @@ func (b *opencodeBackend) processEvents(r io.Reader, ch chan<- Message) eventRes
 		} else if finalOutput == "" && sawStepFinish && !sawToolCall {
 			finalStatus = "failed"
 			finalError = "opencode returned empty output after closing a step"
-			trySend(ch, Message{Type: MessageError, Content: finalError})
+			emptyStreamGuard = true
 		}
 	}
 
@@ -570,7 +602,9 @@ func (b *opencodeBackend) processEvents(r io.Reader, ch chan<- Message) eventRes
 		sessionID:         sessionID,
 		usage:             usage,
 		noTerminalSignal:  noTerminalSignal,
+		emptyStreamGuard:  emptyStreamGuard,
 		sawTerminalSignal: sawStepFinish && !noTerminalSignal,
+		sawErrorEvent:     sawErrorEvent,
 	}
 }
 
