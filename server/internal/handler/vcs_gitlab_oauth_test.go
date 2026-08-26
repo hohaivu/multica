@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,7 +11,7 @@ import (
 
 func TestGitLabOAuthStateRoundTripAndValidation(t *testing.T) {
 	h := testHandler
-	if h == nil {
+	if h == nil || testPool == nil || h.VCSSecretBox == nil {
 		t.Skip("handler test fixtures unavailable")
 	}
 	state, err := h.sealVCSSecret(`{"workspace_id":"` + testWorkspaceID + `","verifier":"v","issued_at":` + "1" + `}`)
@@ -48,19 +49,22 @@ func TestWriteGitLabHookErrorMappings(t *testing.T) {
 }
 
 func TestDeleteVCSWebhookRegistrationValidatesInputs(t *testing.T) {
-	if testHandler == nil {
+	if testHandler == nil || testPool == nil {
 		t.Skip("handler test fixtures unavailable")
 	}
+	box := withVCSBox(t)
+	connID := seedVCSConnection(t, context.Background(), box, "gitlab", testHandler.cfg.GitLabInstanceURL)
+	t.Cleanup(func() { cleanupVCS(context.Background(), connID) })
 	for name, path := range map[string]string{
-		"invalid scope":  "/api/workspaces/" + testWorkspaceID + "/vcs/connections/invalid/hooks/other/1",
-		"invalid target": "/api/workspaces/" + testWorkspaceID + "/vcs/connections/invalid/hooks/project/nope",
+		"invalid scope":  "/api/workspaces/" + testWorkspaceID + "/vcs/connections/" + connID + "/hooks/other/1",
+		"invalid target": "/api/workspaces/" + testWorkspaceID + "/vcs/connections/" + connID + "/hooks/project/nope",
 	} {
 		t.Run(name, func(t *testing.T) {
-			req := vcsHandlerRequest(http.MethodDelete, path, nil, "invalid")
+			req := vcsHandlerRequest(http.MethodDelete, path, nil, connID, map[string]string{"scope": "other", "targetId": "nope"})
 			w := httptest.NewRecorder()
 			testHandler.DeleteVCSWebhookRegistration(w, req)
-			if w.Code != http.StatusBadRequest && w.Code != http.StatusNotFound {
-				t.Fatalf("%s: unexpected status %d", name, w.Code)
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("%s: expected 400, got %d", name, w.Code)
 			}
 		})
 	}

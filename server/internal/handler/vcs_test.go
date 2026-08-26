@@ -11,12 +11,17 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-func vcsHandlerRequest(method, path string, body any, connectionID string) *http.Request {
+func vcsHandlerRequest(method, path string, body any, connectionID string, extra ...map[string]string) *http.Request {
 	req := newRequest(method, path, body)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", testWorkspaceID)
 	if connectionID != "" {
 		rctx.URLParams.Add("connectionId", connectionID)
+	}
+	if len(extra) > 0 {
+		for key, value := range extra[0] {
+			rctx.URLParams.Add(key, value)
+		}
 	}
 	return req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 }

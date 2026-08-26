@@ -100,10 +100,15 @@ func (h *Handler) GitLabOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	account := accountInfo.Login
 	secret := ""
-	if existing, lookupErr := h.Queries.GetVCSConnectionByWorkspaceAndInstance(r.Context(), db.GetVCSConnectionByWorkspaceAndInstanceParams{WorkspaceID: wsUUID, InstanceUrl: h.cfg.GitLabInstanceURL}); lookupErr == nil {
+	existing, lookupErr := h.Queries.GetVCSConnectionByWorkspaceAndInstance(r.Context(), db.GetVCSConnectionByWorkspaceAndInstanceParams{WorkspaceID: wsUUID, InstanceUrl: h.cfg.GitLabInstanceURL})
+	switch {
+	case lookupErr == nil:
 		secret, err = h.openVCSSecret(existing.WebhookSecretEncrypted)
-	} else {
+	case errors.Is(lookupErr, pgx.ErrNoRows):
 		secret, err = newVCSWebhookSecret()
+	default:
+		fail("lookup")
+		return
 	}
 	if err != nil {
 		fail("secret")
@@ -303,11 +308,25 @@ func (h *Handler) gitlabAccessToken(ctx context.Context, conn db.VcsConnection) 
 		return vcs.GitLabCredential{Token: access, OAuth: true}, nil
 	}
 	v, err, _ := h.gitlabRefresh.Do(uuidToString(conn.ID), func() (any, error) {
-		refresh, e := h.openVCSSecret(conn.RefreshTokenEncrypted)
+		fresh, e := h.Queries.GetVCSConnectionByID(ctx, conn.ID)
+		if e != nil {
+			return nil, e
+		}
+		if fresh.CredentialStatus == "expired" {
+			return nil, errGitLabReconnect
+		}
+		if fresh.AccessTokenExpiresAt.Valid && time.Until(fresh.AccessTokenExpiresAt.Time) > 5*time.Minute {
+			access, e := h.openVCSSecret(fresh.AccessTokenEncrypted)
+			if e != nil {
+				return nil, e
+			}
+			return vcs.GitLabCredential{Token: access, OAuth: true}, nil
+		}
+		refresh, e := h.openVCSSecret(fresh.RefreshTokenEncrypted)
 		if e != nil {
 			return nil, errGitLabReconnect
 		}
-		tok, e := vcs.GitLabRefreshToken(ctx, conn.InstanceUrl, h.cfg.GitLabOAuthClientID, h.cfg.GitLabOAuthClientSecret, refresh, strings.TrimRight(h.cfg.PublicURL, "/")+"/api/gitlab/oauth/callback")
+		tok, e := vcs.GitLabRefreshToken(ctx, fresh.InstanceUrl, h.cfg.GitLabOAuthClientID, h.cfg.GitLabOAuthClientSecret, refresh, strings.TrimRight(h.cfg.PublicURL, "/")+"/api/gitlab/oauth/callback")
 		if errors.Is(e, vcs.ErrRefreshRejected) {
 			_ = h.Queries.MarkVCSConnectionCredentialExpired(ctx, conn.ID)
 			return nil, errGitLabReconnect
