@@ -1,9 +1,11 @@
 package handler
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -17,6 +19,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 type gitLabOAuthState struct {
@@ -73,6 +76,10 @@ func (h *Handler) GitLabOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		fail("invalid_workspace")
 		return
 	}
+	if _, err := h.Queries.GetWorkspace(r.Context(), wsUUID); err != nil {
+		fail("invalid_workspace")
+		return
+	}
 	code := r.URL.Query().Get("code")
 	if code == "" {
 		fail("authorization_denied")
@@ -124,7 +131,7 @@ func (h *Handler) GitLabOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		fail("save")
 		return
 	}
-	h.publish("vcs.connection.created", s.WorkspaceID, "system", "", map[string]any{"id": uuidToString(conn.ID)})
+	h.publish(protocol.EventVCSConnectionCreated, s.WorkspaceID, "system", "", map[string]any{"id": uuidToString(conn.ID)})
 	http.Redirect(w, r, strings.TrimRight(h.cfg.AppURL, "/")+"/settings?tab=integrations&gitlab_connected=1", http.StatusFound)
 }
 
@@ -133,9 +140,9 @@ func (h *Handler) ListGitLabTargets(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	tok, err := h.openVCSSecret(conn.AccessTokenEncrypted)
+	cred, err := h.gitlabAccessToken(r.Context(), conn)
 	if err != nil {
-		writeError(w, 409, "reconnect GitLab")
+		writeGitLabCredentialError(w, err)
 		return
 	}
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
@@ -146,26 +153,38 @@ func (h *Handler) ListGitLabTargets(w http.ResponseWriter, r *http.Request) {
 	if per < 1 || per > 100 {
 		per = 25
 	}
-	projects, next, err := vcs.GitLabListProjects(r.Context(), conn.InstanceUrl, vcs.GitLabCredential{Token: tok, OAuth: conn.AuthKind == "oauth"}, page, per)
+	projects, next, err := vcs.GitLabListProjects(r.Context(), conn.InstanceUrl, cred, page, per)
 	if err != nil {
-		writeError(w, 502, "could not list GitLab projects")
+		writeGitLabUpstreamError(w, err, "could not list GitLab projects")
 		return
 	}
-	groups, _, err := vcs.GitLabListGroups(r.Context(), conn.InstanceUrl, vcs.GitLabCredential{Token: tok, OAuth: conn.AuthKind == "oauth"}, page, per)
+	groups, _, err := vcs.GitLabListGroups(r.Context(), conn.InstanceUrl, cred, page, per)
 	if err != nil {
-		writeError(w, 502, "could not list GitLab groups")
+		writeGitLabUpstreamError(w, err, "could not list GitLab groups")
 		return
 	}
 	writeJSON(w, 200, map[string]any{"projects": projects, "groups": groups, "next_page": next})
 }
 
 func (h *Handler) loadGitLabConnection(w http.ResponseWriter, r *http.Request) (db.VcsConnection, bool) {
+	if !h.isVCSAvailable() {
+		writeError(w, http.StatusNotFound, "vcs integration is not available on this deployment")
+		return db.VcsConnection{}, false
+	}
+	if !h.isVCSConfigured() {
+		writeError(w, http.StatusServiceUnavailable, "vcs integration not configured (MULTICA_VCS_SECRET_KEY unset)")
+		return db.VcsConnection{}, false
+	}
+	wsUUID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "workspace id")
+	if !ok {
+		return db.VcsConnection{}, false
+	}
 	id, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "connectionId"), "connection id")
 	if !ok {
 		return db.VcsConnection{}, false
 	}
 	conn, err := h.Queries.GetVCSConnectionByID(r.Context(), id)
-	if err != nil || conn.Provider != "gitlab" {
+	if err != nil || conn.Provider != "gitlab" || uuidToString(conn.WorkspaceID) != uuidToString(wsUUID) {
 		writeError(w, 404, "GitLab connection not found")
 		return db.VcsConnection{}, false
 	}
@@ -188,9 +207,9 @@ func (h *Handler) CreateVCSWebhookRegistration(w http.ResponseWriter, r *http.Re
 		writeError(w, 400, "scope and target_id are required")
 		return
 	}
-	tok, err := h.openVCSSecret(conn.AccessTokenEncrypted)
+	cred, err := h.gitlabAccessToken(r.Context(), conn)
 	if err != nil {
-		writeError(w, 409, "reconnect GitLab")
+		writeGitLabCredentialError(w, err)
 		return
 	}
 	secret, err := h.openVCSSecret(conn.WebhookSecretEncrypted)
@@ -198,9 +217,9 @@ func (h *Handler) CreateVCSWebhookRegistration(w http.ResponseWriter, r *http.Re
 		writeError(w, 500, "webhook secret unavailable")
 		return
 	}
-	hook, err := vcs.GitLabCreateHook(r.Context(), conn.InstanceUrl, vcs.GitLabCredential{Token: tok, OAuth: conn.AuthKind == "oauth"}, in.Scope, in.TargetID, h.vcsWebhookURL(uuidToString(conn.ID)), secret)
+	hook, err := vcs.GitLabCreateHook(r.Context(), conn.InstanceUrl, cred, in.Scope, in.TargetID, h.vcsWebhookURL(uuidToString(conn.ID)), secret)
 	if err != nil {
-		writeError(w, 400, "group webhooks require GitLab Premium; pick a project instead")
+		writeGitLabHookError(w, err, in.Scope)
 		return
 	}
 	row, err := h.Queries.UpsertVCSWebhookRegistration(r.Context(), db.UpsertVCSWebhookRegistrationParams{ConnectionID: conn.ID, Scope: in.Scope, TargetID: in.TargetID, TargetPath: in.TargetPath, HookID: hook})
@@ -230,11 +249,88 @@ func (h *Handler) DeleteVCSWebhookRegistration(w http.ResponseWriter, r *http.Re
 	target, _ := strconv.ParseInt(chi.URLParam(r, "targetId"), 10, 64)
 	row, err := h.Queries.GetVCSWebhookRegistration(r.Context(), db.GetVCSWebhookRegistrationParams{ConnectionID: conn.ID, Scope: chi.URLParam(r, "scope"), TargetID: target})
 	if err == nil {
-		tok, _ := h.openVCSSecret(conn.AccessTokenEncrypted)
-		_ = vcs.GitLabDeleteHook(r.Context(), conn.InstanceUrl, vcs.GitLabCredential{Token: tok, OAuth: conn.AuthKind == "oauth"}, row.Scope, row.TargetID, row.HookID)
+		if cred, credErr := h.gitlabAccessToken(r.Context(), conn); credErr == nil {
+			_ = vcs.GitLabDeleteHook(r.Context(), conn.InstanceUrl, cred, row.Scope, row.TargetID, row.HookID)
+		}
 	}
 	_ = h.Queries.DeleteVCSWebhookRegistration(r.Context(), db.DeleteVCSWebhookRegistrationParams{ConnectionID: conn.ID, Scope: chi.URLParam(r, "scope"), TargetID: target})
 	w.WriteHeader(204)
+}
+
+var errGitLabReconnect = errors.New("reconnect GitLab")
+
+func (h *Handler) gitlabAccessToken(ctx context.Context, conn db.VcsConnection) (vcs.GitLabCredential, error) {
+	access, err := h.openVCSSecret(conn.AccessTokenEncrypted)
+	if err != nil {
+		return vcs.GitLabCredential{}, errGitLabReconnect
+	}
+	if conn.AuthKind != "oauth" {
+		return vcs.GitLabCredential{Token: access}, nil
+	}
+	if conn.CredentialStatus == "expired" {
+		return vcs.GitLabCredential{}, errGitLabReconnect
+	}
+	if conn.AccessTokenExpiresAt.Valid && time.Until(conn.AccessTokenExpiresAt.Time) > 5*time.Minute {
+		return vcs.GitLabCredential{Token: access, OAuth: true}, nil
+	}
+	v, err, _ := h.gitlabRefresh.Do(uuidToString(conn.ID), func() (any, error) {
+		refresh, e := h.openVCSSecret(conn.RefreshTokenEncrypted)
+		if e != nil {
+			return nil, errGitLabReconnect
+		}
+		tok, e := vcs.GitLabRefreshToken(ctx, conn.InstanceUrl, h.cfg.GitLabOAuthClientID, h.cfg.GitLabOAuthClientSecret, refresh, strings.TrimRight(h.cfg.PublicURL, "/")+"/api/gitlab/oauth/callback")
+		if errors.Is(e, vcs.ErrRefreshRejected) {
+			_ = h.Queries.MarkVCSConnectionCredentialExpired(ctx, conn.ID)
+			return nil, errGitLabReconnect
+		}
+		if e != nil {
+			return nil, e
+		}
+		a, e := h.sealVCSSecret(tok.AccessToken)
+		if e != nil {
+			return nil, e
+		}
+		r, e := h.sealVCSSecret(tok.RefreshToken)
+		if e != nil {
+			return nil, e
+		}
+		_, e = h.Queries.UpdateVCSConnectionTokens(ctx, db.UpdateVCSConnectionTokensParams{ID: conn.ID, AccessTokenEncrypted: a, RefreshTokenEncrypted: r, AccessTokenExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Duration(tok.ExpiresIn) * time.Second), Valid: tok.ExpiresIn > 0}})
+		if e != nil {
+			return nil, e
+		}
+		return vcs.GitLabCredential{Token: tok.AccessToken, OAuth: true}, nil
+	})
+	if err != nil {
+		return vcs.GitLabCredential{}, err
+	}
+	return v.(vcs.GitLabCredential), nil
+}
+
+func writeGitLabCredentialError(w http.ResponseWriter, err error) {
+	if errors.Is(err, errGitLabReconnect) {
+		writeError(w, 409, "reconnect GitLab")
+		return
+	}
+	writeError(w, 502, "GitLab credential unavailable")
+}
+func writeGitLabUpstreamError(w http.ResponseWriter, err error, fallback string) {
+	if errors.Is(err, vcs.ErrUnauthorized) {
+		writeError(w, 409, "reconnect GitLab")
+		return
+	}
+	writeError(w, 502, fallback)
+}
+func writeGitLabHookError(w http.ResponseWriter, err error, scope string) {
+	var se vcs.StatusError
+	if errors.As(err, &se) && (se.Status == 401 || se.Status == 403) {
+		if scope == "group" && se.Status == 403 {
+			writeError(w, 400, "group webhooks require GitLab Premium; pick a project instead")
+			return
+		}
+		writeError(w, 409, "reconnect GitLab")
+		return
+	}
+	writeError(w, 502, "GitLab upstream error")
 }
 
 func urlQuery(s string) string {

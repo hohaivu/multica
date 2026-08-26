@@ -21,6 +21,7 @@ data:
   DISABLE_WORKSPACE_CREATION: {{ .Values.backend.config.disableWorkspaceCreation | quote }}
   MULTICA_VCS_INTEGRATION_ENABLED: {{ .Values.backend.config.vcsIntegrationEnabled | quote }}
   MULTICA_GITLAB_INSTANCE_URL: {{ .Values.backend.config.gitlabInstanceUrl | quote }}
+  MULTICA_GITLAB_OAUTH_CLIENT_ID: {{ .Values.backend.config.gitlabOAuthClientId | quote }}
   MULTICA_ENTITLEMENT_POLICY_ENABLED: {{ .Values.backend.config.entitlementPolicy.enabled | quote }}
   MULTICA_ENTITLEMENT_POLICY_URL: {{ .Values.backend.config.entitlementPolicy.url | quote }}
   MULTICA_ENTITLEMENT_POLICY_TIMEOUT: {{ .Values.backend.config.entitlementPolicy.timeout | quote }}

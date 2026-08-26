@@ -19,6 +19,10 @@ type GitLabCredential struct {
 	OAuth bool
 }
 
+type StatusError struct{ Status int }
+
+func (e StatusError) Error() string { return fmt.Sprintf("gitlab: status %d", e.Status) }
+
 func ValidateGitLabOAuthToken(ctx context.Context, instanceURL, token string) (Account, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, NormalizeInstanceURL(instanceURL)+"/api/v4/user", nil)
 	if err != nil {
@@ -162,7 +166,10 @@ func gitLabListTargets(ctx context.Context, instanceURL string, cred GitLabCrede
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, 0, fmt.Errorf("gitlab: %s status %d", path, resp.StatusCode)
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			return nil, 0, fmt.Errorf("%w: %v", ErrUnauthorized, StatusError{Status: resp.StatusCode})
+		}
+		return nil, 0, StatusError{Status: resp.StatusCode}
 	}
 	var targets []GitLabTarget
 	if err := json.NewDecoder(resp.Body).Decode(&targets); err != nil {
@@ -190,7 +197,7 @@ func GitLabCreateHook(ctx context.Context, instanceURL string, cred GitLabCreden
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return 0, fmt.Errorf("gitlab: create hook status %d", resp.StatusCode)
+		return 0, StatusError{Status: resp.StatusCode}
 	}
 	var out struct {
 		ID int64 `json:"id"`
@@ -199,6 +206,29 @@ func GitLabCreateHook(ctx context.Context, instanceURL string, cred GitLabCreden
 		return 0, err
 	}
 	return out.ID, nil
+}
+
+func GitLabUpdateHook(ctx context.Context, instanceURL string, cred GitLabCredential, scope string, targetID, hookID int64, hookURL, secret string) error {
+	path, err := gitLabHookPath(scope, targetID, strconv.FormatInt(hookID, 10))
+	if err != nil {
+		return err
+	}
+	body, _ := json.Marshal(map[string]any{"url": hookURL, "token": secret, "name": "Multica", "merge_requests_events": true, "pipeline_events": true, "push_events": false, "enable_ssl_verification": true})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, NormalizeInstanceURL(instanceURL)+path, strings.NewReader(string(body)))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	setGitLabAuth(req, cred)
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return StatusError{Status: resp.StatusCode}
+	}
+	return nil
 }
 
 func GitLabDeleteHook(ctx context.Context, instanceURL string, cred GitLabCredential, scope string, targetID, hookID int64) error {
@@ -217,7 +247,7 @@ func GitLabDeleteHook(ctx context.Context, instanceURL string, cred GitLabCreden
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("gitlab: delete hook status %d", resp.StatusCode)
+		return StatusError{Status: resp.StatusCode}
 	}
 	return nil
 }
