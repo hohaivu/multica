@@ -281,6 +281,9 @@ ws_vcs_prs AS MATERIALIZED (
 ws_vcs_connections AS MATERIALIZED (
     SELECT id FROM vcs_connection WHERE workspace_id = $1
 ),
+cleared_vcs_webhook_registrations AS (
+    DELETE FROM vcs_webhook_registration WHERE connection_id IN (SELECT id FROM ws_vcs_connections)
+),
 ws_channel_installations AS MATERIALIZED (
     SELECT id FROM channel_installation WHERE workspace_id = $1
 ),
