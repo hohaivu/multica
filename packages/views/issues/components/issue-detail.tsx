@@ -135,6 +135,7 @@ import { ProgressRing } from "./progress-ring";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 import { useT } from "../../i18n";
 import { useIssueDetailScrollRestore } from "../hooks/use-issue-detail-scroll-restore";
+import { useIssueDetailScrollHotkeys } from "../hooks/use-issue-detail-scroll-hotkeys";
 import { useInPageFind } from "../hooks/use-in-page-find";
 import { useStickyComposer } from "../hooks/use-sticky-composer";
 import { FindBar } from "./find-bar";
@@ -2198,6 +2199,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   }, [beginDesktopSidebarToggle, isMobile, sidebarRef]);
 
   useRightSidebarShortcut(rightSidebarShortcutTargetRef, handleToggleSidebar);
+
+  useIssueDetailScrollHotkeys(scrollContainerEl);
 
   useIssueDetailScrollRestore({
     restoreKey: `${wsId}:${id}`,
