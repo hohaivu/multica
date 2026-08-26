@@ -11,6 +11,9 @@ ORDER BY created_at ASC;
 SELECT * FROM vcs_connection
 WHERE id = $1;
 
+-- name: GetVCSConnectionByWorkspaceAndInstance :one
+SELECT * FROM vcs_connection WHERE workspace_id = $1 AND instance_url = $2;
+
 -- name: UpsertVCSConnection :one
 -- Reconnecting the same instance rotates the stored token/secret, provider,
 -- and identity in place rather than creating a duplicate row.
@@ -49,10 +52,38 @@ cleared_links AS (
 cleared_statuses AS (
     DELETE FROM vcs_commit_status WHERE connection_id IN (SELECT target.id FROM target)
 ),
-cleared_prs AS (
-    DELETE FROM vcs_pull_request WHERE connection_id IN (SELECT target.id FROM target)
+    cleared_prs AS (
+        DELETE FROM vcs_pull_request WHERE connection_id IN (SELECT target.id FROM target)
+),
+cleared_hooks AS (
+        DELETE FROM vcs_webhook_registration WHERE connection_id IN (SELECT target.id FROM target)
 )
 DELETE FROM vcs_connection WHERE vcs_connection.id = $1 AND vcs_connection.workspace_id = $2;
+
+-- name: UpsertVCSOAuthConnection :one
+INSERT INTO vcs_connection (workspace_id, provider, instance_url, account_login, access_token_encrypted, webhook_secret_encrypted, connected_by_id, auth_kind, refresh_token_encrypted, access_token_expires_at, credential_status)
+VALUES ($1, 'gitlab', $2, $3, $4, $5, sqlc.narg('connected_by_id'), 'oauth', $6, $7, 'ok')
+ON CONFLICT (workspace_id, instance_url) DO UPDATE SET provider='gitlab', account_login=EXCLUDED.account_login, access_token_encrypted=EXCLUDED.access_token_encrypted, webhook_secret_encrypted=EXCLUDED.webhook_secret_encrypted, connected_by_id=EXCLUDED.connected_by_id, auth_kind='oauth', refresh_token_encrypted=EXCLUDED.refresh_token_encrypted, access_token_expires_at=EXCLUDED.access_token_expires_at, credential_status='ok', updated_at=now()
+RETURNING *;
+
+-- name: UpdateVCSConnectionTokens :one
+UPDATE vcs_connection SET access_token_encrypted=$2, refresh_token_encrypted=$3, access_token_expires_at=$4, credential_status='ok', updated_at=now() WHERE id=$1 RETURNING *;
+
+-- name: MarkVCSConnectionCredentialExpired :exec
+UPDATE vcs_connection SET credential_status='expired', updated_at=now() WHERE id=$1;
+
+-- name: UpsertVCSWebhookRegistration :one
+INSERT INTO vcs_webhook_registration (connection_id, scope, target_id, target_path, hook_id) VALUES ($1,$2,$3,$4,$5)
+ON CONFLICT (connection_id, scope, target_id) DO UPDATE SET target_path=EXCLUDED.target_path, hook_id=EXCLUDED.hook_id RETURNING *;
+
+-- name: ListVCSWebhookRegistrations :many
+SELECT * FROM vcs_webhook_registration WHERE connection_id=$1 ORDER BY created_at;
+
+-- name: GetVCSWebhookRegistration :one
+SELECT * FROM vcs_webhook_registration WHERE connection_id=$1 AND scope=$2 AND target_id=$3;
+
+-- name: DeleteVCSWebhookRegistration :exec
+DELETE FROM vcs_webhook_registration WHERE connection_id=$1 AND scope=$2 AND target_id=$3;
 
 -- name: RotateVCSConnectionWebhookSecret :one
 UPDATE vcs_connection

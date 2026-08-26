@@ -180,6 +180,9 @@ The auth rate limits require `REDIS_URL`; without it, the startup log notes that
 | Composio | `COMPOSIO_CALLBACK_BASE_URL` | Callback API URL; can fall back to `MULTICA_PUBLIC_URL` |
 | Composio | `COMPOSIO_STATE_SECRET` | OAuth state signing secret; can be derived from `JWT_SECRET` |
 | Self-hosted Git | `MULTICA_VCS_INTEGRATION_ENABLED` | Forgejo/Gitea/GitLab integration switch; enabled by default in compose |
+| GitLab OAuth | `MULTICA_GITLAB_INSTANCE_URL` | GitLab instance URL |
+| GitLab OAuth | `MULTICA_GITLAB_OAUTH_CLIENT_ID` | OAuth client ID |
+| GitLab OAuth | `MULTICA_GITLAB_OAUTH_CLIENT_SECRET` | OAuth client secret |
 | Self-hosted Git | `MULTICA_VCS_SECRET_KEY` | Base64-encoded 32-byte encryption key (`openssl rand -base64 32`); the feature is entirely unavailable without it |
 | Plugins | `MULTICA_PLUGIN_SECRET_KEY` | Base64-encoded 32-byte key for stored secrets and encrypted surface launch URLs |
 | Plugins | `MULTICA_PLUGIN_SURFACE_ORIGIN` | Dedicated cookie-free browser origin routed to this backend; must differ from app/API origins and preserve `Host` |

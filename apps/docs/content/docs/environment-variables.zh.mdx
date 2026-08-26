@@ -180,6 +180,9 @@ MULTICA_PUBLIC_URL=https://api.multica.example.com
 | Composio | `COMPOSIO_CALLBACK_BASE_URL` | 回调 API 地址；可回退到 `MULTICA_PUBLIC_URL` |
 | Composio | `COMPOSIO_STATE_SECRET` | OAuth state 签名密钥；可从 `JWT_SECRET` 派生 |
 | 自托管 Git | `MULTICA_VCS_INTEGRATION_ENABLED` | Forgejo/Gitea/GitLab 集成开关，compose 默认开启 |
+| GitLab OAuth | `MULTICA_GITLAB_INSTANCE_URL` | GitLab 实例 URL |
+| GitLab OAuth | `MULTICA_GITLAB_OAUTH_CLIENT_ID` | OAuth 客户端 ID |
+| GitLab OAuth | `MULTICA_GITLAB_OAUTH_CLIENT_SECRET` | OAuth 客户端密钥 |
 | 自托管 Git | `MULTICA_VCS_SECRET_KEY` | base64 编码的 32 字节加密密钥（`openssl rand -base64 32`）；未配置时该功能整体不可用 |
 | 插件 | `MULTICA_PLUGIN_SECRET_KEY` | base64 编码的 32 字节密钥，用于加密已存 secret 和 surface 启动 URL |
 | 插件 | `MULTICA_PLUGIN_SURFACE_ORIGIN` | 路由到后端的独立无 Cookie 浏览器 origin；必须不同于 app/API origin，并保留 `Host` |

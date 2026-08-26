@@ -83,9 +83,21 @@ import type {
   User,
   WebhookDelivery,
   WorkspaceMcpServer,
+  ListVCSConnectionsResponse,
+  ConnectVCSResponse,
+  VCSWebhookRegistration,
 } from "../types";
 import type { CloudRuntimeNode } from "../runtimes/cloud-runtime";
 import type { CreateFeedbackResponse } from "../feedback/types";
+
+export const VCSConnectionSchema = z.object({ id: z.string(), workspace_id: z.string(), provider: z.enum(["forgejo", "gitea", "gitlab"]), instance_url: z.string(), account_login: z.string(), webhook_url: z.string(), webhook_path: z.string(), created_at: z.string(), auth_kind: z.enum(["pat", "oauth"]).default("pat"), credential_status: z.enum(["ok", "expired"]).default("ok") }).passthrough();
+export const ListVCSConnectionsResponseSchema = z.object({ connections: z.array(VCSConnectionSchema).default([]), available: z.boolean().optional(), configured: z.boolean().optional(), can_manage: z.boolean().optional(), gitlab_oauth: z.object({ available: z.boolean(), instance_url: z.string() }).optional() }).passthrough();
+export const ConnectVCSResponseSchema = VCSConnectionSchema.extend({ webhook_secret: z.string() }).passthrough();
+export const GitLabOAuthStartResponseSchema = z.object({ url: z.string(), configured: z.boolean() }).passthrough();
+export const GitLabTargetSchema = z.object({ id: z.number(), name: z.string(), path_with_namespace: z.string(), web_url: z.string() }).passthrough();
+export const GitLabTargetsResponseSchema = z.object({ projects: z.array(GitLabTargetSchema).default([]), groups: z.array(GitLabTargetSchema).default([]), next_page: z.number().default(0) }).passthrough();
+export const VCSWebhookRegistrationSchema = z.object({ connection_id: z.string(), scope: z.enum(["project", "group"]), target_id: z.number(), target_path: z.string(), hook_id: z.number(), created_at: z.string() }).passthrough();
+export const VCSWebhookRegistrationsResponseSchema = z.object({ registrations: z.array(VCSWebhookRegistrationSchema).default([]) }).passthrough();
 
 export const PluginConfigFieldSchema = z.object({
   key: z.string(),

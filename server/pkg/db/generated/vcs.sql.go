@@ -25,8 +25,11 @@ cleared_links AS (
 cleared_statuses AS (
     DELETE FROM vcs_commit_status WHERE connection_id IN (SELECT target.id FROM target)
 ),
-cleared_prs AS (
-    DELETE FROM vcs_pull_request WHERE connection_id IN (SELECT target.id FROM target)
+    cleared_prs AS (
+        DELETE FROM vcs_pull_request WHERE connection_id IN (SELECT target.id FROM target)
+),
+cleared_hooks AS (
+        DELETE FROM vcs_webhook_registration WHERE connection_id IN (SELECT target.id FROM target)
 )
 DELETE FROM vcs_connection WHERE vcs_connection.id = $1 AND vcs_connection.workspace_id = $2
 `
@@ -44,6 +47,21 @@ type DeleteVCSConnectionParams struct {
 // workspace_id is a no-op rather than deleting another tenant's child rows.
 func (q *Queries) DeleteVCSConnection(ctx context.Context, arg DeleteVCSConnectionParams) error {
 	_, err := q.db.Exec(ctx, deleteVCSConnection, arg.ID, arg.WorkspaceID)
+	return err
+}
+
+const deleteVCSWebhookRegistration = `-- name: DeleteVCSWebhookRegistration :exec
+DELETE FROM vcs_webhook_registration WHERE connection_id=$1 AND scope=$2 AND target_id=$3
+`
+
+type DeleteVCSWebhookRegistrationParams struct {
+	ConnectionID pgtype.UUID `json:"connection_id"`
+	Scope        string      `json:"scope"`
+	TargetID     int64       `json:"target_id"`
+}
+
+func (q *Queries) DeleteVCSWebhookRegistration(ctx context.Context, arg DeleteVCSWebhookRegistrationParams) error {
+	_, err := q.db.Exec(ctx, deleteVCSWebhookRegistration, arg.ConnectionID, arg.Scope, arg.TargetID)
 	return err
 }
 
@@ -87,7 +105,7 @@ func (q *Queries) GetIssueCombinedPullRequestCloseAggregate(ctx context.Context,
 }
 
 const getVCSConnectionByID = `-- name: GetVCSConnectionByID :one
-SELECT id, workspace_id, provider, instance_url, account_login, access_token_encrypted, webhook_secret_encrypted, connected_by_id, created_at, updated_at FROM vcs_connection
+SELECT id, workspace_id, provider, instance_url, account_login, access_token_encrypted, webhook_secret_encrypted, connected_by_id, created_at, updated_at, auth_kind, refresh_token_encrypted, access_token_expires_at, credential_status FROM vcs_connection
 WHERE id = $1
 `
 
@@ -105,6 +123,65 @@ func (q *Queries) GetVCSConnectionByID(ctx context.Context, id pgtype.UUID) (Vcs
 		&i.ConnectedByID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AuthKind,
+		&i.RefreshTokenEncrypted,
+		&i.AccessTokenExpiresAt,
+		&i.CredentialStatus,
+	)
+	return i, err
+}
+
+const getVCSConnectionByWorkspaceAndInstance = `-- name: GetVCSConnectionByWorkspaceAndInstance :one
+SELECT id, workspace_id, provider, instance_url, account_login, access_token_encrypted, webhook_secret_encrypted, connected_by_id, created_at, updated_at, auth_kind, refresh_token_encrypted, access_token_expires_at, credential_status FROM vcs_connection WHERE workspace_id = $1 AND instance_url = $2
+`
+
+type GetVCSConnectionByWorkspaceAndInstanceParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	InstanceUrl string      `json:"instance_url"`
+}
+
+func (q *Queries) GetVCSConnectionByWorkspaceAndInstance(ctx context.Context, arg GetVCSConnectionByWorkspaceAndInstanceParams) (VcsConnection, error) {
+	row := q.db.QueryRow(ctx, getVCSConnectionByWorkspaceAndInstance, arg.WorkspaceID, arg.InstanceUrl)
+	var i VcsConnection
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Provider,
+		&i.InstanceUrl,
+		&i.AccountLogin,
+		&i.AccessTokenEncrypted,
+		&i.WebhookSecretEncrypted,
+		&i.ConnectedByID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.AuthKind,
+		&i.RefreshTokenEncrypted,
+		&i.AccessTokenExpiresAt,
+		&i.CredentialStatus,
+	)
+	return i, err
+}
+
+const getVCSWebhookRegistration = `-- name: GetVCSWebhookRegistration :one
+SELECT connection_id, scope, target_id, target_path, hook_id, created_at FROM vcs_webhook_registration WHERE connection_id=$1 AND scope=$2 AND target_id=$3
+`
+
+type GetVCSWebhookRegistrationParams struct {
+	ConnectionID pgtype.UUID `json:"connection_id"`
+	Scope        string      `json:"scope"`
+	TargetID     int64       `json:"target_id"`
+}
+
+func (q *Queries) GetVCSWebhookRegistration(ctx context.Context, arg GetVCSWebhookRegistrationParams) (VcsWebhookRegistration, error) {
+	row := q.db.QueryRow(ctx, getVCSWebhookRegistration, arg.ConnectionID, arg.Scope, arg.TargetID)
+	var i VcsWebhookRegistration
+	err := row.Scan(
+		&i.ConnectionID,
+		&i.Scope,
+		&i.TargetID,
+		&i.TargetPath,
+		&i.HookID,
+		&i.CreatedAt,
 	)
 	return i, err
 }
@@ -193,7 +270,7 @@ func (q *Queries) ListIssueIDsForVCSPRHead(ctx context.Context, arg ListIssueIDs
 
 const listVCSConnectionsByWorkspace = `-- name: ListVCSConnectionsByWorkspace :many
 
-SELECT id, workspace_id, provider, instance_url, account_login, access_token_encrypted, webhook_secret_encrypted, connected_by_id, created_at, updated_at FROM vcs_connection
+SELECT id, workspace_id, provider, instance_url, account_login, access_token_encrypted, webhook_secret_encrypted, connected_by_id, created_at, updated_at, auth_kind, refresh_token_encrypted, access_token_expires_at, credential_status FROM vcs_connection
 WHERE workspace_id = $1
 ORDER BY created_at ASC
 `
@@ -221,6 +298,10 @@ func (q *Queries) ListVCSConnectionsByWorkspace(ctx context.Context, workspaceID
 			&i.ConnectedByID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.AuthKind,
+			&i.RefreshTokenEncrypted,
+			&i.AccessTokenExpiresAt,
+			&i.CredentialStatus,
 		); err != nil {
 			return nil, err
 		}
@@ -345,12 +426,52 @@ func (q *Queries) ListVCSPullRequestsByIssue(ctx context.Context, issueID pgtype
 	return items, nil
 }
 
+const listVCSWebhookRegistrations = `-- name: ListVCSWebhookRegistrations :many
+SELECT connection_id, scope, target_id, target_path, hook_id, created_at FROM vcs_webhook_registration WHERE connection_id=$1 ORDER BY created_at
+`
+
+func (q *Queries) ListVCSWebhookRegistrations(ctx context.Context, connectionID pgtype.UUID) ([]VcsWebhookRegistration, error) {
+	rows, err := q.db.Query(ctx, listVCSWebhookRegistrations, connectionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []VcsWebhookRegistration{}
+	for rows.Next() {
+		var i VcsWebhookRegistration
+		if err := rows.Scan(
+			&i.ConnectionID,
+			&i.Scope,
+			&i.TargetID,
+			&i.TargetPath,
+			&i.HookID,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const markVCSConnectionCredentialExpired = `-- name: MarkVCSConnectionCredentialExpired :exec
+UPDATE vcs_connection SET credential_status='expired', updated_at=now() WHERE id=$1
+`
+
+func (q *Queries) MarkVCSConnectionCredentialExpired(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, markVCSConnectionCredentialExpired, id)
+	return err
+}
+
 const rotateVCSConnectionWebhookSecret = `-- name: RotateVCSConnectionWebhookSecret :one
 UPDATE vcs_connection
 SET webhook_secret_encrypted = $3,
     updated_at = now()
 WHERE id = $1 AND workspace_id = $2
-RETURNING id, workspace_id, provider, instance_url, account_login, access_token_encrypted, webhook_secret_encrypted, connected_by_id, created_at, updated_at
+RETURNING id, workspace_id, provider, instance_url, account_login, access_token_encrypted, webhook_secret_encrypted, connected_by_id, created_at, updated_at, auth_kind, refresh_token_encrypted, access_token_expires_at, credential_status
 `
 
 type RotateVCSConnectionWebhookSecretParams struct {
@@ -373,6 +494,48 @@ func (q *Queries) RotateVCSConnectionWebhookSecret(ctx context.Context, arg Rota
 		&i.ConnectedByID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AuthKind,
+		&i.RefreshTokenEncrypted,
+		&i.AccessTokenExpiresAt,
+		&i.CredentialStatus,
+	)
+	return i, err
+}
+
+const updateVCSConnectionTokens = `-- name: UpdateVCSConnectionTokens :one
+UPDATE vcs_connection SET access_token_encrypted=$2, refresh_token_encrypted=$3, access_token_expires_at=$4, credential_status='ok', updated_at=now() WHERE id=$1 RETURNING id, workspace_id, provider, instance_url, account_login, access_token_encrypted, webhook_secret_encrypted, connected_by_id, created_at, updated_at, auth_kind, refresh_token_encrypted, access_token_expires_at, credential_status
+`
+
+type UpdateVCSConnectionTokensParams struct {
+	ID                    pgtype.UUID        `json:"id"`
+	AccessTokenEncrypted  string             `json:"access_token_encrypted"`
+	RefreshTokenEncrypted string             `json:"refresh_token_encrypted"`
+	AccessTokenExpiresAt  pgtype.Timestamptz `json:"access_token_expires_at"`
+}
+
+func (q *Queries) UpdateVCSConnectionTokens(ctx context.Context, arg UpdateVCSConnectionTokensParams) (VcsConnection, error) {
+	row := q.db.QueryRow(ctx, updateVCSConnectionTokens,
+		arg.ID,
+		arg.AccessTokenEncrypted,
+		arg.RefreshTokenEncrypted,
+		arg.AccessTokenExpiresAt,
+	)
+	var i VcsConnection
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Provider,
+		&i.InstanceUrl,
+		&i.AccountLogin,
+		&i.AccessTokenEncrypted,
+		&i.WebhookSecretEncrypted,
+		&i.ConnectedByID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.AuthKind,
+		&i.RefreshTokenEncrypted,
+		&i.AccessTokenExpiresAt,
+		&i.CredentialStatus,
 	)
 	return i, err
 }
@@ -435,7 +598,7 @@ ON CONFLICT (workspace_id, instance_url) DO UPDATE SET
     webhook_secret_encrypted = EXCLUDED.webhook_secret_encrypted,
     connected_by_id          = EXCLUDED.connected_by_id,
     updated_at               = now()
-RETURNING id, workspace_id, provider, instance_url, account_login, access_token_encrypted, webhook_secret_encrypted, connected_by_id, created_at, updated_at
+RETURNING id, workspace_id, provider, instance_url, account_login, access_token_encrypted, webhook_secret_encrypted, connected_by_id, created_at, updated_at, auth_kind, refresh_token_encrypted, access_token_expires_at, credential_status
 `
 
 type UpsertVCSConnectionParams struct {
@@ -472,6 +635,59 @@ func (q *Queries) UpsertVCSConnection(ctx context.Context, arg UpsertVCSConnecti
 		&i.ConnectedByID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AuthKind,
+		&i.RefreshTokenEncrypted,
+		&i.AccessTokenExpiresAt,
+		&i.CredentialStatus,
+	)
+	return i, err
+}
+
+const upsertVCSOAuthConnection = `-- name: UpsertVCSOAuthConnection :one
+INSERT INTO vcs_connection (workspace_id, provider, instance_url, account_login, access_token_encrypted, webhook_secret_encrypted, connected_by_id, auth_kind, refresh_token_encrypted, access_token_expires_at, credential_status)
+VALUES ($1, 'gitlab', $2, $3, $4, $5, $8, 'oauth', $6, $7, 'ok')
+ON CONFLICT (workspace_id, instance_url) DO UPDATE SET provider='gitlab', account_login=EXCLUDED.account_login, access_token_encrypted=EXCLUDED.access_token_encrypted, webhook_secret_encrypted=EXCLUDED.webhook_secret_encrypted, connected_by_id=EXCLUDED.connected_by_id, auth_kind='oauth', refresh_token_encrypted=EXCLUDED.refresh_token_encrypted, access_token_expires_at=EXCLUDED.access_token_expires_at, credential_status='ok', updated_at=now()
+RETURNING id, workspace_id, provider, instance_url, account_login, access_token_encrypted, webhook_secret_encrypted, connected_by_id, created_at, updated_at, auth_kind, refresh_token_encrypted, access_token_expires_at, credential_status
+`
+
+type UpsertVCSOAuthConnectionParams struct {
+	WorkspaceID            pgtype.UUID        `json:"workspace_id"`
+	InstanceUrl            string             `json:"instance_url"`
+	AccountLogin           string             `json:"account_login"`
+	AccessTokenEncrypted   string             `json:"access_token_encrypted"`
+	WebhookSecretEncrypted string             `json:"webhook_secret_encrypted"`
+	RefreshTokenEncrypted  string             `json:"refresh_token_encrypted"`
+	AccessTokenExpiresAt   pgtype.Timestamptz `json:"access_token_expires_at"`
+	ConnectedByID          pgtype.UUID        `json:"connected_by_id"`
+}
+
+func (q *Queries) UpsertVCSOAuthConnection(ctx context.Context, arg UpsertVCSOAuthConnectionParams) (VcsConnection, error) {
+	row := q.db.QueryRow(ctx, upsertVCSOAuthConnection,
+		arg.WorkspaceID,
+		arg.InstanceUrl,
+		arg.AccountLogin,
+		arg.AccessTokenEncrypted,
+		arg.WebhookSecretEncrypted,
+		arg.RefreshTokenEncrypted,
+		arg.AccessTokenExpiresAt,
+		arg.ConnectedByID,
+	)
+	var i VcsConnection
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Provider,
+		&i.InstanceUrl,
+		&i.AccountLogin,
+		&i.AccessTokenEncrypted,
+		&i.WebhookSecretEncrypted,
+		&i.ConnectedByID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.AuthKind,
+		&i.RefreshTokenEncrypted,
+		&i.AccessTokenExpiresAt,
+		&i.CredentialStatus,
 	)
 	return i, err
 }
@@ -589,6 +805,39 @@ func (q *Queries) UpsertVCSPullRequest(ctx context.Context, arg UpsertVCSPullReq
 		&i.ChangedFiles,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const upsertVCSWebhookRegistration = `-- name: UpsertVCSWebhookRegistration :one
+INSERT INTO vcs_webhook_registration (connection_id, scope, target_id, target_path, hook_id) VALUES ($1,$2,$3,$4,$5)
+ON CONFLICT (connection_id, scope, target_id) DO UPDATE SET target_path=EXCLUDED.target_path, hook_id=EXCLUDED.hook_id RETURNING connection_id, scope, target_id, target_path, hook_id, created_at
+`
+
+type UpsertVCSWebhookRegistrationParams struct {
+	ConnectionID pgtype.UUID `json:"connection_id"`
+	Scope        string      `json:"scope"`
+	TargetID     int64       `json:"target_id"`
+	TargetPath   string      `json:"target_path"`
+	HookID       int64       `json:"hook_id"`
+}
+
+func (q *Queries) UpsertVCSWebhookRegistration(ctx context.Context, arg UpsertVCSWebhookRegistrationParams) (VcsWebhookRegistration, error) {
+	row := q.db.QueryRow(ctx, upsertVCSWebhookRegistration,
+		arg.ConnectionID,
+		arg.Scope,
+		arg.TargetID,
+		arg.TargetPath,
+		arg.HookID,
+	)
+	var i VcsWebhookRegistration
+	err := row.Scan(
+		&i.ConnectionID,
+		&i.Scope,
+		&i.TargetID,
+		&i.TargetPath,
+		&i.HookID,
+		&i.CreatedAt,
 	)
 	return i, err
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Copy, GitBranch, RefreshCw, Trash2 } from "lucide-react";
@@ -52,6 +52,7 @@ export function VCSTab() {
   const connections = data?.connections ?? [];
   const configured = data?.configured === true;
   const canManage = data?.can_manage === true;
+  const gitlabOAuth = data?.gitlab_oauth;
 
   const [provider, setProvider] = useState<VCSProvider>("forgejo");
   const [instanceUrl, setInstanceUrl] = useState("");
@@ -62,6 +63,21 @@ export function VCSTab() {
   const [rotating, setRotating] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("gitlab_connected") === "1") toast.success("GitLab connected");
+    if (params.get("gitlab_error")) toast.error(`GitLab connection failed: ${params.get("gitlab_error")}`);
+  }, []);
+
+  async function handleGitLabOAuth() {
+    try {
+      const result = await api.startGitLabOAuth(wsId);
+      if (result.configured && result.url) window.location.href = result.url;
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not start GitLab connection");
+    }
+  }
 
   async function handleConnect() {
     if (connecting || !instanceUrl.trim() || !token.trim()) return;
@@ -142,9 +158,12 @@ export function VCSTab() {
                     <p className="text-body font-medium break-all">
                       {(PROVIDER_LABELS[c.provider] ?? c.provider) + " · " + c.instance_url}
                     </p>
-                    <p className="text-caption text-muted-foreground break-all">
-                      {t(($) => $.vcs.connected_as, { login: c.account_login })}
-                    </p>
+                     <p className="text-caption text-muted-foreground break-all">
+                       {t(($) => $.vcs.connected_as, { login: c.account_login })}
+                     </p>
+                     {c.auth_kind === "oauth" && c.credential_status === "expired" && (
+                       <p className="text-caption text-destructive">GitLab authorization expired. Reconnect GitLab.</p>
+                     )}
                   </div>
                 </div>
                 {canManage && (
@@ -212,6 +231,11 @@ export function VCSTab() {
               </p>
             ) : (
               <>
+                {gitlabOAuth?.available && (
+                  <Button className="w-full" onClick={handleGitLabOAuth}>
+                    Connect GitLab
+                  </Button>
+                )}
                 <div className="space-y-1.5">
                   <Label htmlFor="vcs-provider">{t(($) => $.vcs.form_provider_label)}</Label>
                   <Select

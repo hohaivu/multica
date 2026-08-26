@@ -376,6 +376,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		AllowedEmailDomains:      splitAndTrim(os.Getenv("ALLOWED_EMAIL_DOMAINS")),
 		DisableWorkspaceCreation: os.Getenv("DISABLE_WORKSPACE_CREATION") == "true",
 		VCSIntegrationEnabled:    os.Getenv("MULTICA_VCS_INTEGRATION_ENABLED") == "true",
+		GitLabInstanceURL:        strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_GITLAB_INSTANCE_URL")), "/"),
+		GitLabOAuthClientID:      strings.TrimSpace(os.Getenv("MULTICA_GITLAB_OAUTH_CLIENT_ID")),
+		GitLabOAuthClientSecret:  strings.TrimSpace(os.Getenv("MULTICA_GITLAB_OAUTH_CLIENT_SECRET")),
 		PublicURL:                strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_PUBLIC_URL")), "/"),
 		AppURL:                   appURLFromEnv(),
 		TrustedProxies:           parseTrustedProxies(os.Getenv("MULTICA_TRUSTED_PROXIES")),
@@ -1316,6 +1319,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// HMAC-SHA256 signature in the handler) and post-install setup callback.
 	r.Post("/api/webhooks/github", h.HandleGitHubWebhook)
 	r.Get("/api/github/setup", h.GitHubSetupCallback)
+	r.Get("/api/gitlab/oauth/callback", h.GitLabOAuthCallback)
 	// Slack OAuth callback (no Multica auth in the path — it is hit by Slack's
 	// browser redirect; the workspace/agent/initiator are recovered from the
 	// sealed state). It exchanges the code, upserts the install, then bounces
@@ -1582,6 +1586,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Delete("/github/installations/{installationId}", h.DeleteGitHubInstallation)
 					// VCS connect / disconnect / webhook regeneration (admin-only).
 					r.Post("/vcs/connections", h.ConnectVCS)
+					r.Get("/vcs/oauth/start", h.StartGitLabOAuth)
+					r.Get("/vcs/connections/{connectionId}/targets", h.ListGitLabTargets)
+					r.Get("/vcs/connections/{connectionId}/hooks", h.ListVCSWebhookRegistrations)
+					r.Post("/vcs/connections/{connectionId}/hooks", h.CreateVCSWebhookRegistration)
+					r.Delete("/vcs/connections/{connectionId}/hooks/{scope}/{targetId}", h.DeleteVCSWebhookRegistration)
 					r.Post("/vcs/connections/{connectionId}/rotate-webhook", h.RotateVCSConnectionWebhook)
 					r.Delete("/vcs/connections/{connectionId}", h.DeleteVCSConnection)
 				})
