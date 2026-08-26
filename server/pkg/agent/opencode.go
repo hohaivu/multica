@@ -304,6 +304,20 @@ func (b *opencodeBackend) Execute(ctx context.Context, prompt string, opts ExecO
 			scanResult.status = "failed"
 		}
 
+		if scanResult.output == "" && scanResult.sessionID != "" && scanResult.noTerminalSignal && !scanResult.sawErrorEvent &&
+			runCtx.Err() == nil && ctx.Err() == nil {
+			if recovered, exportErr := b.exportSession(runCtx, execPath, opts, scanResult.sessionID, env); exportErr == nil {
+				scanResult.output = recovered.output
+				scanResult.errMsg = ""
+				scanResult.status = "completed"
+				scanResult.usage = recovered.usage
+				trySend(msgCh, Message{Type: MessageText, Content: recovered.output})
+				trySend(msgCh, Message{Type: MessageStatus, Status: "completed", SessionID: scanResult.sessionID})
+			} else {
+				b.cfg.Logger.Warn("opencode session export fallback failed", "sessionID", scanResult.sessionID, "error", exportErr)
+			}
+		}
+
 		b.cfg.Logger.Info("opencode finished", "pid", cmd.Process.Pid, "status", scanResult.status, "duration", duration.Round(time.Millisecond).String())
 
 		// Build usage map. OpenCode doesn't report model per-step, so we
@@ -341,6 +355,7 @@ type eventResult struct {
 	sessionID        string
 	usage            TokenUsage // accumulated token usage across all steps
 	noTerminalSignal bool       // guard fired: the stream ended without evidence the run actually finished
+	sawErrorEvent    bool
 	// sawTerminalSignal is positive evidence that the run actually finished: a
 	// step_finish closed the last step with no continuation pending and with
 	// something to show for it. It is NOT the negation of noTerminalSignal — a
@@ -365,6 +380,7 @@ type opencodeTodoInput struct {
 func (b *opencodeBackend) processEvents(r io.Reader, ch chan<- Message) eventResult {
 	var output strings.Builder
 	var reasoning strings.Builder
+	sawErrorEvent := false
 	var sessionID string
 	var usage TokenUsage
 	finalStatus := "completed"
@@ -458,6 +474,7 @@ func (b *opencodeBackend) processEvents(r io.Reader, ch chan<- Message) eventRes
 				stepHasContinuationTool = true
 			}
 		case "error":
+			sawErrorEvent = true
 			b.handleErrorEvent(event, ch, &finalStatus, &finalError)
 		case "step_start":
 			openStep = true
@@ -571,6 +588,7 @@ func (b *opencodeBackend) processEvents(r io.Reader, ch chan<- Message) eventRes
 		usage:             usage,
 		noTerminalSignal:  noTerminalSignal,
 		sawTerminalSignal: sawStepFinish && !noTerminalSignal,
+		sawErrorEvent:     sawErrorEvent,
 	}
 }
 

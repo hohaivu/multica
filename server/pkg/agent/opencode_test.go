@@ -24,6 +24,30 @@ func TestNewReturnsOpencodeBackend(t *testing.T) {
 	}
 }
 
+func TestOpencodeExportSessionUsesLastAssistantText(t *testing.T) {
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "opencode")
+	script := `#!/bin/sh
+if [ "$1" = export ]; then
+  printf '%s' '{"messages":[{"role":"assistant","parts":[{"type":"text","text":"old"}]},{"role":"assistant","parts":[{"type":"reasoning","text":"think"},{"type":"text","text":" recovered "}]}],"usage":{"input":4,"output":7}}'
+fi
+`
+	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	b := &opencodeBackend{cfg: Config{ExecutablePath: fake, Logger: slog.Default()}}
+	recovered, err := b.exportSession(context.Background(), fake, ExecOptions{Cwd: dir}, "ses_fake", os.Environ())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered.output != "recovered" {
+		t.Fatalf("output = %q", recovered.output)
+	}
+	if recovered.usage.InputTokens != 4 || recovered.usage.OutputTokens != 7 {
+		t.Fatalf("usage = %+v", recovered.usage)
+	}
+}
+
 // ── Text event tests ──
 
 func TestOpencodeHandleTextEvent(t *testing.T) {
