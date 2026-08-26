@@ -1586,7 +1586,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Delete("/github/installations/{installationId}", h.DeleteGitHubInstallation)
 					// VCS connect / disconnect / webhook regeneration (admin-only).
 					r.Post("/vcs/connections", h.ConnectVCS)
-					r.Get("/vcs/oauth/start", h.StartGitLabOAuth)
+					r.Get("/vcs/gitlab/oauth/start", h.StartGitLabOAuth)
 					r.Get("/vcs/connections/{connectionId}/targets", h.ListGitLabTargets)
 					r.Get("/vcs/connections/{connectionId}/hooks", h.ListVCSWebhookRegistrations)
 					r.Post("/vcs/connections/{connectionId}/hooks", h.CreateVCSWebhookRegistration)

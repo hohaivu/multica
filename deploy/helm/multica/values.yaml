@@ -138,6 +138,8 @@ backend:
     # Set false to hide and reject the integration for this deployment.
     vcsIntegrationEnabled: true
     gitlabInstanceUrl: ""
+    # OAuth client ID is public; MULTICA_GITLAB_OAUTH_CLIENT_SECRET is supplied through existingSecret.
+    gitlabOAuthClientId: ""
     # Managed Cloud policy consumer. The public/self-host chart keeps this off
     # by default, which also guarantees no quota-table access. To enable it,
     # set enabled=true and url to multica-cloud's HTTPS internal base URL, then

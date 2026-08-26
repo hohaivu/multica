@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -265,6 +266,18 @@ func (h *Handler) DeleteVCSConnection(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	conn, err := h.Queries.GetVCSConnectionByID(r.Context(), idUUID)
+	if err == nil && conn.WorkspaceID == wsUUID && conn.Provider == "gitlab" && conn.AuthKind == "oauth" {
+		if cred, credErr := h.gitlabAccessToken(r.Context(), conn); credErr == nil {
+			if rows, listErr := h.Queries.ListVCSWebhookRegistrations(r.Context(), conn.ID); listErr == nil {
+				for _, row := range rows {
+					if hookErr := vcs.GitLabDeleteHook(r.Context(), conn.InstanceUrl, cred, row.Scope, row.TargetID, row.HookID); hookErr != nil {
+						slog.Warn("failed to remove GitLab webhook during disconnect", "connection_id", uuidToString(conn.ID), "hook_id", row.HookID, "error", hookErr)
+					}
+				}
+			}
+		}
+	}
 	if err := h.Queries.DeleteVCSConnection(r.Context(), db.DeleteVCSConnectionParams{
 		ID:          idUUID,
 		WorkspaceID: wsUUID,
@@ -311,6 +324,24 @@ func (h *Handler) RotateVCSConnectionWebhook(w http.ResponseWriter, r *http.Requ
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to mint webhook secret")
 		return
+	}
+	if conn.AuthKind == "oauth" {
+		cred, credErr := h.gitlabAccessToken(r.Context(), conn)
+		if credErr != nil {
+			writeGitLabCredentialError(w, credErr)
+			return
+		}
+		rows, listErr := h.Queries.ListVCSWebhookRegistrations(r.Context(), conn.ID)
+		if listErr != nil {
+			writeError(w, http.StatusBadGateway, "could not list GitLab webhooks")
+			return
+		}
+		for _, row := range rows {
+			if updateErr := vcs.GitLabUpdateHook(r.Context(), conn.InstanceUrl, cred, row.Scope, row.TargetID, row.HookID, h.vcsWebhookURL(uuidToString(conn.ID)), webhookSecret); updateErr != nil {
+				writeError(w, http.StatusBadGateway, "could not update GitLab webhooks")
+				return
+			}
+		}
 	}
 	secretEnc, err := h.sealVCSSecret(webhookSecret)
 	if err != nil {
