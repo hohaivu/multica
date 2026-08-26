@@ -169,6 +169,9 @@ cleared_vcs_pr_links AS (
     DELETE FROM issue_vcs_pull_request
     WHERE pull_request_id IN (SELECT id FROM ws_vcs_prs)
 ),
+cleared_vcs_webhook_registrations AS (
+    DELETE FROM vcs_webhook_registration WHERE connection_id IN (SELECT id FROM ws_vcs_connections)
+),
 cleared_vcs_commit_statuses AS (
     DELETE FROM vcs_commit_status
     WHERE connection_id IN (SELECT id FROM ws_vcs_connections)
