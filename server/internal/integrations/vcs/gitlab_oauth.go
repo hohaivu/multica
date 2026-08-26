@@ -62,6 +62,7 @@ type GitLabTarget struct {
 	ID                int64  `json:"id"`
 	Name              string `json:"name"`
 	PathWithNamespace string `json:"path_with_namespace"`
+	FullPath          string `json:"full_path"`
 	WebURL            string `json:"web_url"`
 }
 
@@ -174,6 +175,11 @@ func gitLabListTargets(ctx context.Context, instanceURL string, cred GitLabCrede
 	var targets []GitLabTarget
 	if err := json.NewDecoder(resp.Body).Decode(&targets); err != nil {
 		return nil, 0, err
+	}
+	for i := range targets {
+		if targets[i].PathWithNamespace == "" {
+			targets[i].PathWithNamespace = targets[i].FullPath
+		}
 	}
 	next, _ := strconv.Atoi(resp.Header.Get("X-Next-Page"))
 	return targets, next, nil

@@ -325,7 +325,14 @@ func (h *Handler) RotateVCSConnectionWebhook(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, "failed to mint webhook secret")
 		return
 	}
+	oldSecret := ""
+	var updatedRows []db.VcsWebhookRegistration
 	if conn.AuthKind == "oauth" {
+		oldSecret, err = h.openVCSSecret(conn.WebhookSecretEncrypted)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "webhook secret unavailable")
+			return
+		}
 		cred, credErr := h.gitlabAccessToken(r.Context(), conn)
 		if credErr != nil {
 			writeGitLabCredentialError(w, credErr)
@@ -338,13 +345,27 @@ func (h *Handler) RotateVCSConnectionWebhook(w http.ResponseWriter, r *http.Requ
 		}
 		for _, row := range rows {
 			if updateErr := vcs.GitLabUpdateHook(r.Context(), conn.InstanceUrl, cred, row.Scope, row.TargetID, row.HookID, h.vcsWebhookURL(uuidToString(conn.ID)), webhookSecret); updateErr != nil {
+				for _, updatedRow := range updatedRows {
+					if rollbackErr := vcs.GitLabUpdateHook(r.Context(), conn.InstanceUrl, cred, updatedRow.Scope, updatedRow.TargetID, updatedRow.HookID, h.vcsWebhookURL(uuidToString(conn.ID)), oldSecret); rollbackErr != nil {
+						slog.Warn("failed to roll back GitLab webhook secret", "connection_id", uuidToString(conn.ID), "hook_id", updatedRow.HookID, "error", rollbackErr)
+					}
+				}
 				writeError(w, http.StatusBadGateway, "could not update GitLab webhooks")
 				return
 			}
+			updatedRows = append(updatedRows, row)
 		}
 	}
 	secretEnc, err := h.sealVCSSecret(webhookSecret)
 	if err != nil {
+		if conn.AuthKind == "oauth" {
+			cred, _ := h.gitlabAccessToken(r.Context(), conn)
+			for _, updatedRow := range updatedRows {
+				if rollbackErr := vcs.GitLabUpdateHook(r.Context(), conn.InstanceUrl, cred, updatedRow.Scope, updatedRow.TargetID, updatedRow.HookID, h.vcsWebhookURL(uuidToString(conn.ID)), oldSecret); rollbackErr != nil {
+					slog.Warn("failed to roll back GitLab webhook secret", "connection_id", uuidToString(conn.ID), "hook_id", updatedRow.HookID, "error", rollbackErr)
+				}
+			}
+		}
 		writeError(w, http.StatusInternalServerError, "failed to encrypt webhook secret")
 		return
 	}
@@ -355,6 +376,14 @@ func (h *Handler) RotateVCSConnectionWebhook(w http.ResponseWriter, r *http.Requ
 		WebhookSecretEncrypted: secretEnc,
 	})
 	if err != nil {
+		if conn.AuthKind == "oauth" {
+			cred, _ := h.gitlabAccessToken(r.Context(), conn)
+			for _, updatedRow := range updatedRows {
+				if rollbackErr := vcs.GitLabUpdateHook(r.Context(), conn.InstanceUrl, cred, updatedRow.Scope, updatedRow.TargetID, updatedRow.HookID, h.vcsWebhookURL(uuidToString(conn.ID)), oldSecret); rollbackErr != nil {
+					slog.Warn("failed to roll back GitLab webhook secret", "connection_id", uuidToString(conn.ID), "hook_id", updatedRow.HookID, "error", rollbackErr)
+				}
+			}
+		}
 		writeError(w, http.StatusInternalServerError, "failed to rotate webhook secret")
 		return
 	}

@@ -9,17 +9,19 @@ import { Callout } from "fumadocs-ui/components/callout";
 **자체 배포한 Multica에서만 사용할 수 있습니다.** 이 연동은 Multica를 **직접 배포해 운영할 때만** 제공되며 Multica Cloud에서는 사용할 수 없습니다. 여기서 "자체 호스팅"은 **Multica 자체를 배포하는 것**을 뜻합니다. 일반적으로 자체 네트워크의 Git 인스턴스에 접근하기 위해 사용합니다. 서버 운영자가 `MULTICA_VCS_INTEGRATION_ENABLED=true`로 기능을 켜고 `MULTICA_VCS_SECRET_KEY`도 설정해야 합니다. 그전에는 설정 → 연동에 이 영역이 표시되지 않습니다.
 </Callout>
 
-### GitLab 원클릭 연결
-
-`api` 범위와 `{MULTICA_PUBLIC_URL}/api/gitlab/oauth/callback` 리디렉션 URI를 사용하는 Confidential GitLab OAuth 애플리케이션을 등록하고 GitLab OAuth 환경 변수를 설정한 뒤 **GitLab 연결**을 클릭합니다. 프로젝트 웹훅은 Free/Community Edition에서 작동하며 그룹 웹훅에는 GitLab Premium이 필요합니다. 토큰은 승인한 사용자로 동작하고 같은 워크스페이스와 인스턴스의 OAuth 연결은 기존 PAT 연결을 제자리에서 업그레이드합니다.
-
 Multica는 워크스페이스별로 자체 호스팅 Git 코드 호스팅인 **Forgejo**, **Gitea**, **GitLab** 중 하나에 연결합니다. 연결하면 브랜치 이름, 제목, 본문에 이슈 번호(예: `MUL-123`)가 포함된 Pull Request(GitLab에서는 Merge Request)가 해당 [이슈](/issues)에 **자동으로 연결**되고 이슈 사이드바의 **Pull requests**에 표시됩니다. 종료 키워드가 있는 PR이 merge되면 이슈가 완료로 이동합니다. head commit의 CI는 카드에 check bar로 표시됩니다.
 
 이 코드 호스팅은 GitHub와 동시에 사용할 수 있으며 워크스페이스 하나에서 원하는 대로 조합할 수 있습니다.
 
 <Callout type="info">
-GitHub와 달리 이 코드 호스팅에는 "App" 모델이 없습니다. 워크스페이스마다 인스턴스 URL과 액세스 token을 저장하고 저장소 또는 조직에 Webhook을 등록합니다. Token과 Webhook secret은 모두 암호화되어 저장됩니다.
+Forgejo/Gitea 및 GitLab PAT 대체 경로는 인스턴스 URL과 토큰을 저장하고 Webhook을 수동으로 등록합니다. GitLab OAuth는 한 번만 인증하면 Multica가 프로젝트 또는 그룹 Hook을 등록합니다. 자격 증명과 Webhook secret은 암호화되어 저장됩니다.
 </Callout>
+
+### GitLab 원클릭 연결
+
+`api` 범위와 `{MULTICA_PUBLIC_URL}/api/gitlab/oauth/callback` 리디렉션 URI를 사용하는 Confidential GitLab OAuth 애플리케이션을 등록한 뒤 `MULTICA_GITLAB_INSTANCE_URL`, `MULTICA_GITLAB_OAUTH_CLIENT_ID`, `MULTICA_GITLAB_OAUTH_CLIENT_SECRET`, `MULTICA_PUBLIC_URL`을 설정하고 **GitLab 연결**을 클릭합니다. 인스턴스 전체 앱은 **Admin → Applications**, 사용자 소유 앱은 **User → Settings → Applications**에서 등록합니다. 프로젝트 웹훅은 Free/Community Edition에서 작동하며 그룹 웹훅에는 GitLab Premium이 필요합니다.
+
+`api` 범위는 승인한 사용자의 광범위한 전체 읽기/쓰기 권한이며 현재 `read_api` PAT보다 엄격히 더 많은 권한입니다. 웹훅을 만들 수 있는 더 좁은 GitLab 범위는 없습니다. 배포 하나당 GitLab 인스턴스 하나만 사용할 수 있으며 같은 워크스페이스와 인스턴스에 OAuth로 연결하면 기존 PAT 연결이 제자리에서 업그레이드됩니다.
 
 ## 사전 조건(서버)
 
