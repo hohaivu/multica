@@ -4196,8 +4196,24 @@ export class ApiClient {
 
   // VCS integration (Forgejo / Gitea / GitLab)
   async listVCSConnections(workspaceId: string): Promise<ListVCSConnectionsResponse> {
-    return this.fetch(`/api/workspaces/${workspaceId}/vcs/connections`);
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/vcs/connections`);
+    return parseWithFallback(raw, ListVCSConnectionsResponseSchema, { connections: [] } satisfies ListVCSConnectionsResponse, { endpoint: "GET /api/workspaces/:id/vcs/connections" });
   }
+
+  async startGitLabOAuth(workspaceId: string): Promise<{ url: string; configured: boolean }> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/vcs/oauth/start`);
+    return parseWithFallback(raw, GitLabOAuthStartResponseSchema, { url: "", configured: false }, { endpoint: "GET /api/workspaces/:id/vcs/oauth/start" });
+  }
+
+  async listGitLabTargets(workspaceId: string, connectionId: string, params: { page?: number; per_page?: number } = {}) {
+    const q = new URLSearchParams(); if (params.page) q.set("page", String(params.page)); if (params.per_page) q.set("per_page", String(params.per_page));
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/vcs/connections/${connectionId}/targets?${q}`);
+    return parseWithFallback(raw, GitLabTargetsResponseSchema, { projects: [], groups: [], next_page: 0 }, { endpoint: "GET /api/workspaces/:id/vcs/connections/:connectionId/targets" });
+  }
+
+  async listVCSWebhookRegistrations(workspaceId: string, connectionId: string) { const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/vcs/connections/${connectionId}/hooks`); return parseWithFallback(raw, VCSWebhookRegistrationsResponseSchema, { registrations: [] }, { endpoint: "GET /api/workspaces/:id/vcs/connections/:connectionId/hooks" }); }
+  async createVCSWebhookRegistration(workspaceId: string, connectionId: string, body: { scope: "project" | "group"; target_id: number; target_path?: string }) { const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/vcs/connections/${connectionId}/hooks`, { method: "POST", body: JSON.stringify(body) }); return parseWithFallback(raw, VCSWebhookRegistrationSchema, { connection_id: connectionId, scope: body.scope, target_id: body.target_id, target_path: body.target_path ?? "", hook_id: 0, created_at: "" }, { endpoint: "POST /api/workspaces/:id/vcs/connections/:connectionId/hooks" }); }
+  async deleteVCSWebhookRegistration(workspaceId: string, connectionId: string, scope: string, targetId: number) { await this.fetch(`/api/workspaces/${workspaceId}/vcs/connections/${connectionId}/hooks/${scope}/${targetId}`, { method: "DELETE" }); }
 
   async connectVCS(
     workspaceId: string,

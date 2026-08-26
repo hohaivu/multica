@@ -9,6 +9,10 @@ import { Callout } from "fumadocs-ui/components/callout";
 **セルフホスト版 Multica 専用です。** この連携は Multica を**自分でデプロイしている**場合のみ利用でき、Multica Cloud では提供されません。ここでの「セルフホスト」は **Multica 自体**のセルフホストを意味します。通常は独自ネットワーク内の Git インスタンスへアクセスするために使用します。サーバー運用者が `MULTICA_VCS_INTEGRATION_ENABLED=true` を設定して機能を有効にし、`MULTICA_VCS_SECRET_KEY` も設定する必要があります。それまでは、設定 → 連携にこのセクションは表示されません。
 </Callout>
 
+### GitLab をワンクリックで接続
+
+スコープ `api`、リダイレクト URI `{MULTICA_PUBLIC_URL}/api/gitlab/oauth/callback` の Confidential GitLab OAuth アプリを登録し、GitLab OAuth 環境変数を設定して **GitLab を接続**をクリックします。プロジェクト Webhook は Free/Community Edition で利用でき、グループ Webhook には GitLab Premium が必要です。トークンは認可ユーザーとして動作し、同じワークスペースとインスタンスの OAuth 接続は既存の PAT 接続をその場でアップグレードします。
+
 Multica はワークスペースごとにセルフホストの Git ホスティング、**Forgejo**、**Gitea**、**GitLab** のいずれかへ接続します。接続後、ブランチ名、タイトル、本文にイシュー番号（例: `MUL-123`）を含む Pull Request（GitLab では Merge Request）は、対応する[イシュー](/issues)へ**自動的に紐づけられ**、イシューサイドバーの **Pull requests** に表示されます。終了キーワードを含む PR がマージされると、イシューは「完了」へ移動します。head commit の CI はカード上のチェックバーとして表示されます。
 
 これらの Git ホスティングは GitHub と並行して利用でき、1 つのワークスペースで任意に組み合わせられます。

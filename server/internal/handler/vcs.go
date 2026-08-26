@@ -24,14 +24,16 @@ import (
 // Secrets are never included; the webhook secret is returned exactly once at
 // create time via VCSConnectResponse.
 type VCSConnectionResponse struct {
-	ID           string `json:"id"`
-	WorkspaceID  string `json:"workspace_id"`
-	Provider     string `json:"provider"`
-	InstanceURL  string `json:"instance_url"`
-	AccountLogin string `json:"account_login"`
-	WebhookURL   string `json:"webhook_url"`
-	WebhookPath  string `json:"webhook_path"`
-	CreatedAt    string `json:"created_at"`
+	ID               string `json:"id"`
+	WorkspaceID      string `json:"workspace_id"`
+	Provider         string `json:"provider"`
+	InstanceURL      string `json:"instance_url"`
+	AccountLogin     string `json:"account_login"`
+	WebhookURL       string `json:"webhook_url"`
+	WebhookPath      string `json:"webhook_path"`
+	CreatedAt        string `json:"created_at"`
+	AuthKind         string `json:"auth_kind"`
+	CredentialStatus string `json:"credential_status"`
 }
 
 // VCSConnectResponse embeds the stored connection plus the one-time plaintext
@@ -53,6 +55,10 @@ func (h *Handler) isVCSAvailable() bool { return h.cfg.VCSIntegrationEnabled }
 
 func (h *Handler) isVCSConfigured() bool { return h.VCSSecretBox != nil }
 
+func (h *Handler) isGitLabOAuthConfigured() bool {
+	return h.isVCSAvailable() && h.isVCSConfigured() && h.cfg.PublicURL != "" && h.cfg.GitLabInstanceURL != "" && h.cfg.GitLabOAuthClientID != "" && h.cfg.GitLabOAuthClientSecret != ""
+}
+
 func (h *Handler) vcsWebhookPath(connID string) string { return vcsWebhookPathPrefix + connID }
 
 func (h *Handler) vcsWebhookURL(connID string) string {
@@ -66,14 +72,16 @@ func (h *Handler) vcsWebhookURL(connID string) string {
 func (h *Handler) vcsConnectionToResponse(c db.VcsConnection) VCSConnectionResponse {
 	id := uuidToString(c.ID)
 	return VCSConnectionResponse{
-		ID:           id,
-		WorkspaceID:  uuidToString(c.WorkspaceID),
-		Provider:     c.Provider,
-		InstanceURL:  c.InstanceUrl,
-		AccountLogin: c.AccountLogin,
-		WebhookURL:   h.vcsWebhookURL(id),
-		WebhookPath:  h.vcsWebhookPath(id),
-		CreatedAt:    timestampToString(c.CreatedAt),
+		ID:               id,
+		WorkspaceID:      uuidToString(c.WorkspaceID),
+		Provider:         c.Provider,
+		InstanceURL:      c.InstanceUrl,
+		AccountLogin:     c.AccountLogin,
+		WebhookURL:       h.vcsWebhookURL(id),
+		WebhookPath:      h.vcsWebhookPath(id),
+		CreatedAt:        timestampToString(c.CreatedAt),
+		AuthKind:         c.AuthKind,
+		CredentialStatus: c.CredentialStatus,
 	}
 }
 
@@ -119,10 +127,11 @@ func (h *Handler) ListVCSConnections(w http.ResponseWriter, r *http.Request) {
 	// can exist there anyway (connect is rejected), so skip the query.
 	if !h.isVCSAvailable() {
 		writeJSON(w, http.StatusOK, map[string]any{
-			"connections": []VCSConnectionResponse{},
-			"available":   false,
-			"configured":  false,
-			"can_manage":  false,
+			"connections":  []VCSConnectionResponse{},
+			"available":    false,
+			"configured":   false,
+			"can_manage":   false,
+			"gitlab_oauth": map[string]any{"available": false, "instance_url": ""},
 		})
 		return
 	}
@@ -137,10 +146,11 @@ func (h *Handler) ListVCSConnections(w http.ResponseWriter, r *http.Request) {
 		out = append(out, h.vcsConnectionToResponse(row))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"connections": out,
-		"available":   true,
-		"configured":  h.isVCSConfigured(),
-		"can_manage":  canManage,
+		"connections":  out,
+		"available":    true,
+		"configured":   h.isVCSConfigured(),
+		"can_manage":   canManage,
+		"gitlab_oauth": map[string]any{"available": h.isGitLabOAuthConfigured(), "instance_url": h.cfg.GitLabInstanceURL},
 	})
 }
 

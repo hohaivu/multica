@@ -83,7 +83,10 @@ type Config struct {
 	// omits it so the UI hides the whole section rather than showing a
 	// "missing key" message a cloud user cannot act on. Populated from
 	// MULTICA_VCS_INTEGRATION_ENABLED; the self-host compose defaults it on.
-	VCSIntegrationEnabled bool
+	VCSIntegrationEnabled   bool
+	GitLabInstanceURL       string
+	GitLabOAuthClientID     string
+	GitLabOAuthClientSecret string
 	// PublicURL is the absolute base URL the API is reachable at from the
 	// public internet, with no trailing slash (e.g. "https://multica.ai").
 	// Used to build webhook_url responses and the fixed Remote MCP OAuth

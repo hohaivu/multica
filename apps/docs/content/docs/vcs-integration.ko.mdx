@@ -9,6 +9,10 @@ import { Callout } from "fumadocs-ui/components/callout";
 **자체 배포한 Multica에서만 사용할 수 있습니다.** 이 연동은 Multica를 **직접 배포해 운영할 때만** 제공되며 Multica Cloud에서는 사용할 수 없습니다. 여기서 "자체 호스팅"은 **Multica 자체를 배포하는 것**을 뜻합니다. 일반적으로 자체 네트워크의 Git 인스턴스에 접근하기 위해 사용합니다. 서버 운영자가 `MULTICA_VCS_INTEGRATION_ENABLED=true`로 기능을 켜고 `MULTICA_VCS_SECRET_KEY`도 설정해야 합니다. 그전에는 설정 → 연동에 이 영역이 표시되지 않습니다.
 </Callout>
 
+### GitLab 원클릭 연결
+
+`api` 범위와 `{MULTICA_PUBLIC_URL}/api/gitlab/oauth/callback` 리디렉션 URI를 사용하는 Confidential GitLab OAuth 애플리케이션을 등록하고 GitLab OAuth 환경 변수를 설정한 뒤 **GitLab 연결**을 클릭합니다. 프로젝트 웹훅은 Free/Community Edition에서 작동하며 그룹 웹훅에는 GitLab Premium이 필요합니다. 토큰은 승인한 사용자로 동작하고 같은 워크스페이스와 인스턴스의 OAuth 연결은 기존 PAT 연결을 제자리에서 업그레이드합니다.
+
 Multica는 워크스페이스별로 자체 호스팅 Git 코드 호스팅인 **Forgejo**, **Gitea**, **GitLab** 중 하나에 연결합니다. 연결하면 브랜치 이름, 제목, 본문에 이슈 번호(예: `MUL-123`)가 포함된 Pull Request(GitLab에서는 Merge Request)가 해당 [이슈](/issues)에 **자동으로 연결**되고 이슈 사이드바의 **Pull requests**에 표시됩니다. 종료 키워드가 있는 PR이 merge되면 이슈가 완료로 이동합니다. head commit의 CI는 카드에 check bar로 표시됩니다.
 
 이 코드 호스팅은 GitHub와 동시에 사용할 수 있으며 워크스페이스 하나에서 원하는 대로 조합할 수 있습니다.

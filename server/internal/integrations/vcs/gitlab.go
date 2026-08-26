@@ -208,7 +208,7 @@ func (gitlabProvider) ValidateToken(ctx context.Context, instanceURL, token stri
 	if err != nil {
 		return Account{}, fmt.Errorf("gitlab: build request: %w", err)
 	}
-	req.Header.Set("PRIVATE-TOKEN", token)
+	setGitLabAuth(req, GitLabCredential{Token: token})
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := httpClient.Do(req)

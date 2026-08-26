@@ -14,6 +14,10 @@ and set `MULTICA_VCS_SECRET_KEY`; until then the section does not appear in
 Settings → Integrations.
 </Callout>
 
+### Connect GitLab in one click
+
+Register a confidential GitLab OAuth application with scope `api` and redirect URI `{MULTICA_PUBLIC_URL}/api/gitlab/oauth/callback`, then set the GitLab OAuth environment variables and click **Connect GitLab**. Project webhooks work on Free/Community Edition; group webhooks require GitLab Premium. The token acts as the authorizing user, and an OAuth connection upgrades an existing PAT connection for the same workspace and instance in place.
+
 Multica connects to a self-hosted Git provider per workspace: **Forgejo**, **Gitea**, or **GitLab**. Once connected, any pull request (GitLab: merge request) whose branch name, title, or body contains an issue identifier (for example `MUL-123`) is **auto-linked** to that [issue](/issues), appears under **Pull requests** in the issue sidebar, and — when merged with a closing keyword — moves the issue to **Done**. CI for the head commit shows as a checks bar on the card.
 
 These providers run alongside GitHub: a workspace can use any combination.

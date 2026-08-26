@@ -1,7 +1,7 @@
 /**
- * Token-based Git provider integration types (Forgejo, Gitea, GitLab). Unlike
- * GitHub there is no App/installation model: each workspace stores a
- * token-based connection to a provider instance. Pull requests mirrored from any
+ * Git provider integration types (Forgejo, Gitea, GitLab). GitLab supports an
+ * optional deployment OAuth application; PAT connections remain supported.
+ * Pull requests mirrored from any
  * of these providers surface through the shared GitHubPullRequest shape, tagged
  * with the matching `provider`.
  */
@@ -21,6 +21,8 @@ export interface VCSConnection {
   webhook_url: string;
   webhook_path: string;
   created_at: string;
+  auth_kind: "pat" | "oauth";
+  credential_status: "ok" | "expired";
 }
 
 export interface ListVCSConnectionsResponse {
@@ -36,7 +38,12 @@ export interface ListVCSConnectionsResponse {
   configured?: boolean;
   /** Whether the caller can connect / disconnect. Non-admins get false. */
   can_manage?: boolean;
+  gitlab_oauth?: GitLabOAuthAvailability;
 }
+
+export interface GitLabOAuthAvailability { available: boolean; instance_url: string }
+export interface GitLabTarget { id: number; name: string; path_with_namespace: string; web_url: string }
+export interface VCSWebhookRegistration { connection_id: string; scope: "project" | "group"; target_id: number; target_path: string; hook_id: number; created_at: string }
 
 export interface ConnectVCSRequest {
   provider: VCSProvider;

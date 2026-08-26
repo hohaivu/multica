@@ -1357,6 +1357,10 @@ type VcsConnection struct {
 	ConnectedByID          pgtype.UUID        `json:"connected_by_id"`
 	CreatedAt              pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+	AuthKind               string             `json:"auth_kind"`
+	RefreshTokenEncrypted  string             `json:"refresh_token_encrypted"`
+	AccessTokenExpiresAt   pgtype.Timestamptz `json:"access_token_expires_at"`
+	CredentialStatus       string             `json:"credential_status"`
 }
 
 type VcsPullRequest struct {
@@ -1383,6 +1387,15 @@ type VcsPullRequest struct {
 	ChangedFiles    int32              `json:"changed_files"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
+type VcsWebhookRegistration struct {
+	ConnectionID pgtype.UUID        `json:"connection_id"`
+	Scope        string             `json:"scope"`
+	TargetID     int64              `json:"target_id"`
+	TargetPath   string             `json:"target_path"`
+	HookID       int64              `json:"hook_id"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 }
 
 type VerificationCode struct {
