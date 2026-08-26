@@ -262,6 +262,7 @@ func TestTaskFailureClassifiers(t *testing.T) {
 		// same treatment as provider_network — the run stalled, it didn't poison
 		// the conversation.
 		{reason: "idle_watchdog", wantType: "agent_error", wantResumeOK: true, wantRetry: true},
+		{reason: "opencode_incomplete_todos", wantType: "agent_error", wantResumeOK: true, wantRetry: true},
 		{reason: "iteration_limit", wantType: "agent_output", wantResumeOK: false, wantRetry: false},
 		{reason: "api_invalid_request", wantType: "agent_error", wantResumeOK: false, wantRetry: false},
 		{reason: "agent_error.context_overflow", wantType: "agent_error", wantResumeOK: false, wantRetry: false},

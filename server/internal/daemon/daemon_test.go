@@ -2909,6 +2909,12 @@ func TestShouldRetryWithFreshSession(t *testing.T) {
 			want:           false,
 		},
 		{
+			name:           "incomplete OpenCode todos keeps the session",
+			result:         agent.Result{Status: "incomplete_todos", Error: "remaining todos"},
+			priorSessionID: "stale-id",
+			want:           false,
+		},
+		{
 			name:           "cancelled terminal does not retry",
 			result:         agent.Result{Status: "cancelled"},
 			priorSessionID: "stale-id",
@@ -3077,6 +3083,20 @@ func TestShouldRetryWithFreshSession(t *testing.T) {
 				t.Fatalf("shouldRetryWithFreshSession(provider=%q) = %v, want %v", provider, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestIncompleteTodosTaskResult(t *testing.T) {
+	result := agent.Result{Status: "incomplete_todos", Error: "remaining todos", SessionID: "session-1"}
+	env := &execenv.Environment{WorkDir: "/work", RootDir: "/root"}
+	usage := []TaskUsageEntry{{Model: "model", InputTokens: 1}}
+
+	got := incompleteTodosTaskResult(result, env, usage)
+	if got.Status != "blocked" || got.FailureReason != "opencode_incomplete_todos" || got.Comment != result.Error {
+		t.Fatalf("got %+v, want blocked incomplete-todos result", got)
+	}
+	if got.SessionID != result.SessionID || got.WorkDir != env.WorkDir || got.EnvRoot != env.RootDir {
+		t.Fatalf("got %+v, want session/workdir/env root preserved", got)
 	}
 }
 
