@@ -244,6 +244,22 @@ func TestLayerCustomEnvKeepsReasonixCredentialsHomeButBlocksStateHome(t *testing
 	}
 }
 
+func TestApplyTaskWorkdirEnvOverridesCustomEnv(t *testing.T) {
+	t.Parallel()
+	agentEnv := map[string]string{}
+	layerCustomEnvAndHermesHome(agentEnv, map[string]string{
+		"PWD":                  "/wrong",
+		"MULTICA_TASK_WORKDIR": "/wrong",
+	}, "", nil)
+	applyTaskWorkdirEnv(agentEnv, "/task/workdir")
+	if agentEnv["PWD"] != "/task/workdir" {
+		t.Fatalf("PWD = %q, want task workdir", agentEnv["PWD"])
+	}
+	if agentEnv["MULTICA_TASK_WORKDIR"] != "/task/workdir" {
+		t.Fatalf("MULTICA_TASK_WORKDIR = %q, want task workdir", agentEnv["MULTICA_TASK_WORKDIR"])
+	}
+}
+
 func TestValidateReasonixStateSegmentRejectsTraversal(t *testing.T) {
 	t.Parallel()
 	for _, value := range []string{"", "../agent", "runtime/agent", "agent id"} {

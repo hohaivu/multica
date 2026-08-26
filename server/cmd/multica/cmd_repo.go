@@ -348,10 +348,14 @@ func runRepoCheckout(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("MULTICA_TOKEN not set (repo checkout requires the active task credential)")
 	}
 
-	// Use current working directory as the checkout target.
-	workDir, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("get working directory: %w", err)
+	workDir := strings.TrimSpace(os.Getenv("MULTICA_TASK_WORKDIR"))
+	if workDir == "" {
+		// Fall back for older daemons and manual invocations.
+		var err error
+		workDir, err = os.Getwd()
+		if err != nil {
+			return fmt.Errorf("get working directory: %w", err)
+		}
 	}
 
 	reqBody := map[string]any{
