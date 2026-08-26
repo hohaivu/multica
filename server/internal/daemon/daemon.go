@@ -8375,17 +8375,25 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 	// and the in-flight branch below never applies AgentToolWatchdog for them
 	// — every tool call this backend runs would be held to the few-minute
 	// idle window instead, killing any build/install/test slower than that
-	// (VUH-140/VUH-144). Use the tool budget as the run's only silence budget
-	// until the backend consumes opencode's true event stream instead of its
-	// `--format json` CLI output (message.part.updated carries
-	// state.status=="running", which the CLI output never does).
-	if idleWindow > 0 && !providerReportsInFlightTools(opts.Provider) && d.cfg.AgentToolWatchdog > idleWindow {
-		taskLog.Debug("idle watchdog: widened to tool budget; provider cannot report in-flight tools",
-			"provider", opts.Provider,
-			"idle_window", idleWindow,
-			"tool_watchdog", d.cfg.AgentToolWatchdog,
-		)
-		idleWindow = d.cfg.AgentToolWatchdog
+	// (VUH-140/VUH-144). Widen to a single run-long silence budget: the
+	// provider's own IdleWatchdogTimeout if it set one (narrowing above would
+	// otherwise be immediately overwritten here — VUH-171), else the full
+	// tool budget. Real fix is the backend consuming opencode's true event
+	// stream instead of its `--format json` CLI output (message.part.updated
+	// carries state.status=="running", which the CLI output never does).
+	if idleWindow > 0 && !providerReportsInFlightTools(opts.Provider) {
+		widened := d.cfg.AgentToolWatchdog
+		if opts.IdleWatchdogTimeout > 0 {
+			widened = opts.IdleWatchdogTimeout
+		}
+		if widened > idleWindow {
+			taskLog.Debug("idle watchdog: widened; provider cannot report in-flight tools",
+				"provider", opts.Provider,
+				"idle_window", idleWindow,
+				"widened_to", widened,
+			)
+			idleWindow = widened
+		}
 	}
 	var idleWatchdogThreshold atomic.Int64
 	idleWatchdogThreshold.Store(int64(idleWindow))
