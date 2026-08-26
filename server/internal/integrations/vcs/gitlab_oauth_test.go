@@ -51,6 +51,57 @@ func TestGitLabOAuthRequests(t *testing.T) {
 	}
 }
 
+func TestGitLabListGroupsBackfillsFullPath(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v4/groups" {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode([]GitLabTarget{{ID: 7, Name: "group", FullPath: "parent/group"}})
+	}))
+	defer server.Close()
+	targets, _, err := GitLabListGroups(context.Background(), server.URL, GitLabCredential{Token: "access", OAuth: true}, 1, 25)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(targets) != 1 || targets[0].PathWithNamespace != "parent/group" {
+		t.Fatalf("group path = %q, want parent/group", targets[0].PathWithNamespace)
+	}
+	body, err := json.Marshal(targets[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `"path_with_namespace":"parent/group"`) {
+		t.Fatalf("outbound target missing path_with_namespace: %s", body)
+	}
+}
+
+func TestGitLabListTargetsUsesGroupCursor(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v4/projects":
+			_ = json.NewEncoder(w).Encode([]GitLabTarget{})
+		case "/api/v4/groups":
+			w.Header().Set("X-Next-Page", "3")
+			_ = json.NewEncoder(w).Encode([]GitLabTarget{})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	projects, projectNext, err := GitLabListProjects(context.Background(), server.URL, GitLabCredential{Token: "access", OAuth: true}, 1, 25)
+	if err != nil || len(projects) != 0 || projectNext != 0 {
+		t.Fatalf("projects: %#v %d %v", projects, projectNext, err)
+	}
+	groups, groupNext, err := GitLabListGroups(context.Background(), server.URL, GitLabCredential{Token: "access", OAuth: true}, 1, 25)
+	if err != nil || len(groups) != 0 || groupNext != 3 {
+		t.Fatalf("groups: %#v %d %v", groups, groupNext, err)
+	}
+	if groupNext <= projectNext {
+		t.Fatalf("group cursor %d should win over project cursor %d", groupNext, projectNext)
+	}
+}
+
 func TestGitLabRefreshRejectsInvalidGrant(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
