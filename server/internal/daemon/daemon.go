@@ -7552,6 +7552,8 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			return TaskResult{}, fmt.Errorf("verify git excludes: %w", err)
 		}
 	}
+	// Apply after custom_env so the task workdir remains daemon-controlled.
+	applyTaskWorkdirEnv(agentEnv, env.WorkDir)
 	if provider == "reasonix" {
 		reasonixStateHome, err := prepareReasonixTaskStateHome(d.cfg.Profile, task.RuntimeID, task.AgentID)
 		if err != nil {
@@ -9229,6 +9231,14 @@ func layerCustomEnvAndHermesHome(agentEnv, customEnv map[string]string, overlayH
 	if overlayHome != "" {
 		agentEnv["HERMES_HOME"] = overlayHome
 	}
+}
+
+func applyTaskWorkdirEnv(agentEnv map[string]string, workDir string) {
+	if workDir == "" {
+		return
+	}
+	agentEnv["PWD"] = workDir
+	agentEnv["MULTICA_TASK_WORKDIR"] = workDir
 }
 
 // prepareReasonixTaskStateHome isolates persisted transcripts and leases per

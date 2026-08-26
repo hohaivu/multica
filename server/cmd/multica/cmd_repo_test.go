@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -233,6 +234,34 @@ func TestRunRepoCheckoutForwardsManagedCheckoutMode(t *testing.T) {
 	if got := body["retry_busy"]; got != true {
 		t.Fatalf("retry_busy = %v, want true", got)
 	}
+}
+
+func TestRunRepoCheckoutUsesTaskWorkdir(t *testing.T) {
+	t.Run("environment", func(t *testing.T) {
+		t.Setenv("MULTICA_TASK_WORKDIR", "  /task/workdir  ")
+		if got := checkoutWorkdirForTest(t); got != "/task/workdir" {
+			t.Fatalf("workdir = %q, want environment workdir", got)
+		}
+	})
+	t.Run("cwd fallback", func(t *testing.T) {
+		t.Setenv("MULTICA_TASK_WORKDIR", "")
+		if got := checkoutWorkdirForTest(t); got == "" {
+			t.Fatal("workdir is empty")
+		}
+	})
+}
+
+func checkoutWorkdirForTest(t *testing.T) string {
+	t.Helper()
+	workDir := strings.TrimSpace(os.Getenv("MULTICA_TASK_WORKDIR"))
+	if workDir != "" {
+		return workDir
+	}
+	workDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working directory: %v", err)
+	}
+	return workDir
 }
 
 func TestRunRepoCheckoutRequiresTaskCredential(t *testing.T) {

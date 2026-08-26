@@ -179,6 +179,10 @@ func TestBuildMetaSkillContentSlimKindMatrix(t *testing.T) {
 			}
 		}
 	}
+	out := buildMetaSkillContent("claude", TaskContextForEnv{IssueID: "i-1", Repos: baseRepo})
+	if !strings.Contains(out, "MULTICA_TASK_WORKDIR") {
+		t.Error("repositories section missing task workdir guidance")
+	}
 }
 
 // TestBriefDueDateTeachesCalendarDayFormat pins the --due-date synopsis to
