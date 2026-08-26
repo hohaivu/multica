@@ -389,6 +389,32 @@ export function VCSTab() {
   );
 }
 
+function is409(err: unknown): boolean {
+  if (err instanceof ApiError && err.status === 409) return true;
+  if (
+    typeof err === "object" &&
+    err !== null &&
+    "status" in err &&
+    (err as { status: unknown }).status === 409
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function getErrorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (
+    typeof err === "object" &&
+    err !== null &&
+    "message" in err &&
+    typeof (err as { message: unknown }).message === "string"
+  ) {
+    return (err as { message: string }).message;
+  }
+  return String(err);
+}
+
 function GitLabOAuthHooksSection({
   wsId,
   connectionId,
@@ -404,11 +430,14 @@ function GitLabOAuthHooksSection({
   const qc = useQueryClient();
   const [mutatingTarget, setMutatingTarget] = useState<string | null>(null);
 
-  const { data: hooksData } = useQuery(vcsWebhookRegistrationsOptions(wsId, connectionId));
+  const { data: hooksData, error: hooksError } = useQuery(
+    vcsWebhookRegistrationsOptions(wsId, connectionId),
+  );
   const registrations: VCSWebhookRegistration[] = hooksData?.registrations ?? [];
 
   const {
     data: targetsData,
+    error: targetsError,
     fetchNextPage,
     hasNextPage,
     isFetchingNextPage,
@@ -475,7 +504,20 @@ function GitLabOAuthHooksSection({
     <div className="space-y-4 pt-2 border-t border-border/50">
       <div className="space-y-2">
         <p className="text-caption font-medium">{t(($) => $.vcs.registered_webhooks_title)}</p>
-        {registrations.length === 0 ? (
+        {hooksError ? (
+          is409(hooksError) ? (
+            <div className="flex items-center justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-caption text-destructive">
+              <p>{t(($) => $.vcs.reconnect_gitlab_prompt)}</p>
+              {canManage && (
+                <Button variant="destructive" size="sm" onClick={onReconnect}>
+                  {t(($) => $.vcs.reconnect_gitlab)}
+                </Button>
+              )}
+            </div>
+          ) : (
+            <p className="text-caption text-destructive">{getErrorMessage(hooksError)}</p>
+          )
+        ) : registrations.length === 0 ? (
           <p className="text-caption text-muted-foreground">{t(($) => $.vcs.no_webhooks_registered)}</p>
         ) : (
           <div className="space-y-1.5">
@@ -514,105 +556,118 @@ function GitLabOAuthHooksSection({
       {canManage && (
         <div className="space-y-2">
           <p className="text-caption font-medium">{t(($) => $.vcs.target_picker_title)}</p>
-          <div className="space-y-1.5">
-            {allProjects.map((proj) => {
-              const isRegistered = registrations.some(
-                (r) => r.scope === "project" && r.target_id === proj.id,
-              );
-              return (
-                <div
-                  key={`project-${proj.id}`}
-                  className="flex items-center justify-between gap-2 rounded-md border bg-card px-3 py-1.5 text-caption"
-                >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <Badge variant="outline" className="text-micro font-normal shrink-0">
-                      {t(($) => $.vcs.scope_project)}
-                    </Badge>
-                    <span className="truncate" title={proj.path_with_namespace}>
-                      {proj.path_with_namespace}
-                    </span>
+          {targetsError ? (
+            is409(targetsError) ? (
+              <div className="flex items-center justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-caption text-destructive">
+                <p>{t(($) => $.vcs.reconnect_gitlab_prompt)}</p>
+                <Button variant="destructive" size="sm" onClick={onReconnect}>
+                  {t(($) => $.vcs.reconnect_gitlab)}
+                </Button>
+              </div>
+            ) : (
+              <p className="text-caption text-destructive">{getErrorMessage(targetsError)}</p>
+            )
+          ) : (
+            <div className="space-y-1.5">
+              {allProjects.map((proj) => {
+                const isRegistered = registrations.some(
+                  (r) => r.scope === "project" && r.target_id === proj.id,
+                );
+                return (
+                  <div
+                    key={`project-${proj.id}`}
+                    className="flex items-center justify-between gap-2 rounded-md border bg-card px-3 py-1.5 text-caption"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Badge variant="outline" className="text-micro font-normal shrink-0">
+                        {t(($) => $.vcs.scope_project)}
+                      </Badge>
+                      <span className="truncate" title={proj.path_with_namespace}>
+                        {proj.path_with_namespace}
+                      </span>
+                    </div>
+                    {isRegistered ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 px-2 text-destructive hover:text-destructive shrink-0"
+                        onClick={() => handleRemove("project", proj.id)}
+                        disabled={mutatingTarget === `project-${proj.id}`}
+                      >
+                        {t(($) => $.vcs.remove_webhook)}
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 px-2 shrink-0"
+                        onClick={() => handleAdd("project", proj.id, proj.path_with_namespace)}
+                        disabled={mutatingTarget === `project-${proj.id}`}
+                      >
+                        <Plus className="h-3.5 w-3.5 mr-1" />
+                        {t(($) => $.vcs.add_webhook)}
+                      </Button>
+                    )}
                   </div>
-                  {isRegistered ? (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-7 px-2 text-destructive hover:text-destructive shrink-0"
-                      onClick={() => handleRemove("project", proj.id)}
-                      disabled={mutatingTarget === `project-${proj.id}`}
-                    >
-                      {t(($) => $.vcs.remove_webhook)}
-                    </Button>
-                  ) : (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-7 px-2 shrink-0"
-                      onClick={() => handleAdd("project", proj.id, proj.path_with_namespace)}
-                      disabled={mutatingTarget === `project-${proj.id}`}
-                    >
-                      <Plus className="h-3.5 w-3.5 mr-1" />
-                      {t(($) => $.vcs.add_webhook)}
-                    </Button>
-                  )}
-                </div>
-              );
-            })}
+                );
+              })}
 
-            {allGroups.map((grp) => {
-              const isRegistered = registrations.some(
-                (r) => r.scope === "group" && r.target_id === grp.id,
-              );
-              return (
-                <div
-                  key={`group-${grp.id}`}
-                  className="flex items-center justify-between gap-2 rounded-md border bg-card px-3 py-1.5 text-caption"
-                >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <Badge variant="outline" className="text-micro font-normal shrink-0">
-                      {t(($) => $.vcs.scope_group)}
-                    </Badge>
-                    <span className="truncate" title={grp.path_with_namespace}>
-                      {grp.path_with_namespace}
-                    </span>
+              {allGroups.map((grp) => {
+                const isRegistered = registrations.some(
+                  (r) => r.scope === "group" && r.target_id === grp.id,
+                );
+                return (
+                  <div
+                    key={`group-${grp.id}`}
+                    className="flex items-center justify-between gap-2 rounded-md border bg-card px-3 py-1.5 text-caption"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Badge variant="outline" className="text-micro font-normal shrink-0">
+                        {t(($) => $.vcs.scope_group)}
+                      </Badge>
+                      <span className="truncate" title={grp.path_with_namespace}>
+                        {grp.path_with_namespace}
+                      </span>
+                    </div>
+                    {isRegistered ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 px-2 text-destructive hover:text-destructive shrink-0"
+                        onClick={() => handleRemove("group", grp.id)}
+                        disabled={mutatingTarget === `group-${grp.id}`}
+                      >
+                        {t(($) => $.vcs.remove_webhook)}
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 px-2 shrink-0"
+                        onClick={() => handleAdd("group", grp.id, grp.path_with_namespace)}
+                        disabled={mutatingTarget === `group-${grp.id}`}
+                      >
+                        <Plus className="h-3.5 w-3.5 mr-1" />
+                        {t(($) => $.vcs.add_webhook)}
+                      </Button>
+                    )}
                   </div>
-                  {isRegistered ? (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-7 px-2 text-destructive hover:text-destructive shrink-0"
-                      onClick={() => handleRemove("group", grp.id)}
-                      disabled={mutatingTarget === `group-${grp.id}`}
-                    >
-                      {t(($) => $.vcs.remove_webhook)}
-                    </Button>
-                  ) : (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-7 px-2 shrink-0"
-                      onClick={() => handleAdd("group", grp.id, grp.path_with_namespace)}
-                      disabled={mutatingTarget === `group-${grp.id}`}
-                    >
-                      <Plus className="h-3.5 w-3.5 mr-1" />
-                      {t(($) => $.vcs.add_webhook)}
-                    </Button>
-                  )}
-                </div>
-              );
-            })}
+                );
+              })}
 
-            {hasNextPage && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="w-full text-caption"
-                onClick={() => fetchNextPage()}
-                disabled={isFetchingNextPage}
-              >
-                {t(($) => $.vcs.load_more_targets)}
-              </Button>
-            )}
-          </div>
+              {hasNextPage && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="w-full text-caption"
+                  onClick={() => fetchNextPage()}
+                  disabled={isFetchingNextPage}
+                >
+                  {t(($) => $.vcs.load_more_targets)}
+                </Button>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -32,6 +32,10 @@ const registrationsRef = vi.hoisted(() => ({
   current: [] as VCSWebhookRegistration[],
 }));
 
+const hooksErrorRef = vi.hoisted(() => ({
+  current: null as unknown,
+}));
+
 const targetsRef = vi.hoisted(() => ({
   current: {
     pages: [
@@ -44,24 +48,40 @@ const targetsRef = vi.hoisted(() => ({
   },
 }));
 
+const targetsErrorRef = vi.hoisted(() => ({
+  current: null as unknown,
+}));
+
 vi.mock("@tanstack/react-query", () => ({
   useQuery: (opts: { queryKey: unknown[] }) => {
     const key = JSON.stringify(opts.queryKey);
-    if (key.includes("connections")) return { data: connectionsRef.current };
-    if (key.includes("hooks")) return { data: { registrations: registrationsRef.current } };
-    return { data: undefined };
+    if (key.includes("connections")) return { data: connectionsRef.current, error: null };
+    if (key.includes("hooks")) {
+      return {
+        data: hooksErrorRef.current ? undefined : { registrations: registrationsRef.current },
+        error: hooksErrorRef.current,
+      };
+    }
+    return { data: undefined, error: null };
   },
   useInfiniteQuery: (opts: { queryKey: unknown[] }) => {
     const key = JSON.stringify(opts.queryKey);
     if (key.includes("targets")) {
       return {
-        data: targetsRef.current,
+        data: targetsErrorRef.current ? undefined : targetsRef.current,
+        error: targetsErrorRef.current,
         fetchNextPage: vi.fn(),
         hasNextPage: false,
         isFetchingNextPage: false,
       };
     }
-    return { data: undefined, fetchNextPage: vi.fn(), hasNextPage: false, isFetchingNextPage: false };
+    return {
+      data: undefined,
+      error: null,
+      fetchNextPage: vi.fn(),
+      hasNextPage: false,
+      isFetchingNextPage: false,
+    };
   },
   useQueryClient: () => ({
     invalidateQueries: mockInvalidate,
@@ -117,6 +137,7 @@ function resetFixtures() {
     gitlab_oauth: { available: true, instance_url: "https://gitlab.example.com" },
   };
   registrationsRef.current = [];
+  hooksErrorRef.current = null;
   targetsRef.current = {
     pages: [
       {
@@ -126,6 +147,7 @@ function resetFixtures() {
       },
     ],
   };
+  targetsErrorRef.current = null;
 }
 
 describe("VCSTab", () => {
@@ -347,5 +369,131 @@ describe("VCSTab", () => {
     await waitFor(() => {
       expect(mockToastError).toHaveBeenCalledWith("group webhooks require GitLab Premium");
     });
+  });
+
+  it("renders inline reconnect prompt with working reconnect action when targets query fails with 409", async () => {
+    const user = userEvent.setup();
+    connectionsRef.current.connections = [
+      {
+        id: "conn-oauth-1",
+        workspace_id: "workspace-1",
+        provider: "gitlab",
+        instance_url: "https://gitlab.example.com",
+        account_login: "oauthuser",
+        webhook_url: "https://multica.example.com/api/vcs/webhook/conn-oauth-1",
+        webhook_path: "/api/vcs/webhook/conn-oauth-1",
+        created_at: "2026-08-01T00:00:00Z",
+        auth_kind: "oauth",
+        credential_status: "ok",
+      },
+    ];
+    targetsErrorRef.current = new ApiError(
+      "GitLab authorization expired. Reconnect GitLab.",
+      409,
+      "Conflict",
+    );
+    mockStartGitLabOAuth.mockResolvedValue({
+      url: "https://gitlab.example.com/oauth/authorize",
+      configured: true,
+    });
+
+    render(<VCSTab />, { wrapper: I18nWrapper });
+
+    expect(screen.getByText("Projects & Groups")).toBeTruthy();
+    expect(screen.getByText(/GitLab authorization expired\. Reconnect GitLab\./i)).toBeTruthy();
+
+    const reconnectBtn = screen.getByRole("button", { name: /Reconnect GitLab/i });
+    await user.click(reconnectBtn);
+
+    await waitFor(() => {
+      expect(mockStartGitLabOAuth).toHaveBeenCalledWith("workspace-1");
+    });
+  });
+
+  it("renders inline reconnect prompt with working reconnect action when registrations query fails with 409", async () => {
+    const user = userEvent.setup();
+    connectionsRef.current.connections = [
+      {
+        id: "conn-oauth-1",
+        workspace_id: "workspace-1",
+        provider: "gitlab",
+        instance_url: "https://gitlab.example.com",
+        account_login: "oauthuser",
+        webhook_url: "https://multica.example.com/api/vcs/webhook/conn-oauth-1",
+        webhook_path: "/api/vcs/webhook/conn-oauth-1",
+        created_at: "2026-08-01T00:00:00Z",
+        auth_kind: "oauth",
+        credential_status: "ok",
+      },
+    ];
+    hooksErrorRef.current = new ApiError(
+      "GitLab authorization expired. Reconnect GitLab.",
+      409,
+      "Conflict",
+    );
+    mockStartGitLabOAuth.mockResolvedValue({
+      url: "https://gitlab.example.com/oauth/authorize",
+      configured: true,
+    });
+
+    render(<VCSTab />, { wrapper: I18nWrapper });
+
+    expect(screen.getByText("Registered webhooks")).toBeTruthy();
+    expect(screen.queryByText("No webhooks registered yet")).toBeNull();
+    expect(screen.getByText(/GitLab authorization expired\. Reconnect GitLab\./i)).toBeTruthy();
+
+    const reconnectBtn = screen.getByRole("button", { name: /Reconnect GitLab/i });
+    await user.click(reconnectBtn);
+
+    await waitFor(() => {
+      expect(mockStartGitLabOAuth).toHaveBeenCalledWith("workspace-1");
+    });
+  });
+
+  it("surfaces server message when targets query fails with non-409 error", () => {
+    connectionsRef.current.connections = [
+      {
+        id: "conn-oauth-1",
+        workspace_id: "workspace-1",
+        provider: "gitlab",
+        instance_url: "https://gitlab.example.com",
+        account_login: "oauthuser",
+        webhook_url: "https://multica.example.com/api/vcs/webhook/conn-oauth-1",
+        webhook_path: "/api/vcs/webhook/conn-oauth-1",
+        created_at: "2026-08-01T00:00:00Z",
+        auth_kind: "oauth",
+        credential_status: "ok",
+      },
+    ];
+    targetsErrorRef.current = new ApiError("GitLab instance unreachable", 502, "Bad Gateway");
+
+    render(<VCSTab />, { wrapper: I18nWrapper });
+
+    expect(screen.getByText("Projects & Groups")).toBeTruthy();
+    expect(screen.getByText("GitLab instance unreachable")).toBeTruthy();
+  });
+
+  it("surfaces server message when registrations query fails with non-409 error", () => {
+    connectionsRef.current.connections = [
+      {
+        id: "conn-oauth-1",
+        workspace_id: "workspace-1",
+        provider: "gitlab",
+        instance_url: "https://gitlab.example.com",
+        account_login: "oauthuser",
+        webhook_url: "https://multica.example.com/api/vcs/webhook/conn-oauth-1",
+        webhook_path: "/api/vcs/webhook/conn-oauth-1",
+        created_at: "2026-08-01T00:00:00Z",
+        auth_kind: "oauth",
+        credential_status: "ok",
+      },
+    ];
+    hooksErrorRef.current = new ApiError("Failed to fetch webhook registrations", 500, "Internal Server Error");
+
+    render(<VCSTab />, { wrapper: I18nWrapper });
+
+    expect(screen.getByText("Registered webhooks")).toBeTruthy();
+    expect(screen.queryByText("No webhooks registered yet")).toBeNull();
+    expect(screen.getByText("Failed to fetch webhook registrations")).toBeTruthy();
   });
 });
