@@ -238,30 +238,57 @@ func TestRunRepoCheckoutForwardsManagedCheckoutMode(t *testing.T) {
 
 func TestRunRepoCheckoutUsesTaskWorkdir(t *testing.T) {
 	t.Run("environment", func(t *testing.T) {
+		var body map[string]any
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode checkout body: %v", err)
+			}
+			json.NewEncoder(w).Encode(map[string]string{"path": "/work/repo", "branch_name": "agent/test/task"})
+		}))
+		defer srv.Close()
+
+		t.Setenv("MULTICA_DAEMON_PORT", strings.TrimPrefix(srv.URL, "http://127.0.0.1:"))
+		t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+		t.Setenv("MULTICA_AGENT_NAME", "Test Agent")
+		t.Setenv("MULTICA_TASK_ID", "task-1")
+		t.Setenv("MULTICA_TOKEN", "mat_repo_checkout_test")
 		t.Setenv("MULTICA_TASK_WORKDIR", "  /task/workdir  ")
-		if got := checkoutWorkdirForTest(t); got != "/task/workdir" {
+
+		if err := runRepoCheckout(&cobra.Command{}, []string{"https://github.com/org/repo.git"}); err != nil {
+			t.Fatalf("runRepoCheckout: %v", err)
+		}
+		if got := body["workdir"]; got != "/task/workdir" {
 			t.Fatalf("workdir = %q, want environment workdir", got)
 		}
 	})
 	t.Run("cwd fallback", func(t *testing.T) {
+		var body map[string]any
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode checkout body: %v", err)
+			}
+			json.NewEncoder(w).Encode(map[string]string{"path": "/work/repo", "branch_name": "agent/test/task"})
+		}))
+		defer srv.Close()
+
+		t.Setenv("MULTICA_DAEMON_PORT", strings.TrimPrefix(srv.URL, "http://127.0.0.1:"))
+		t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+		t.Setenv("MULTICA_AGENT_NAME", "Test Agent")
+		t.Setenv("MULTICA_TASK_ID", "task-1")
+		t.Setenv("MULTICA_TOKEN", "mat_repo_checkout_test")
 		t.Setenv("MULTICA_TASK_WORKDIR", "")
-		if got := checkoutWorkdirForTest(t); got == "" {
-			t.Fatal("workdir is empty")
+		cwd, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("get working directory: %v", err)
+		}
+
+		if err := runRepoCheckout(&cobra.Command{}, []string{"https://github.com/org/repo.git"}); err != nil {
+			t.Fatalf("runRepoCheckout: %v", err)
+		}
+		if got := body["workdir"]; got != cwd {
+			t.Fatalf("workdir = %q, want cwd %q", got, cwd)
 		}
 	})
-}
-
-func checkoutWorkdirForTest(t *testing.T) string {
-	t.Helper()
-	workDir := strings.TrimSpace(os.Getenv("MULTICA_TASK_WORKDIR"))
-	if workDir != "" {
-		return workDir
-	}
-	workDir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("get working directory: %v", err)
-	}
-	return workDir
 }
 
 func TestRunRepoCheckoutRequiresTaskCredential(t *testing.T) {
