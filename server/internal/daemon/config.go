@@ -30,16 +30,17 @@ const (
 	DefaultAgentTimeout                   = 0
 	DefaultCodexSemanticInactivityTimeout = 10 * time.Minute
 	DefaultCodexHandshakeTimeout          = 30 * time.Second
-	// DefaultOpenCodeIdleWatchdog shortens the no-message budget for OpenCode
-	// runs while they are not executing a tool. OpenCode streams text and tool
-	// events incrementally, so a completely silent interval here covers both a
-	// missing first model token and a stalled response stream. The generic
-	// AgentIdleWatchdog remains the global enable/disable switch. Kept equal to
-	// AgentIdleWatchdog by default (the merge rule in runTask only takes this
-	// value when it is smaller) — lower it further with
-	// MULTICA_OPENCODE_IDLE_WATCHDOG if opencode stalls need faster detection
-	// than other providers.
-	DefaultOpenCodeIdleWatchdog = 3 * time.Minute
+	// DefaultOpenCodeIdleWatchdog is opencode's run-long silence budget.
+	// OpenCode's `--format json` stream reports a tool part only once it is
+	// already terminal (providerReportsInFlightTools), so unlike other
+	// providers it gets no separate, larger AgentToolWatchdog budget while a
+	// tool is in flight — this single value must cover both a stalled model
+	// response and its longest legitimate silent tool call (e.g. a full test
+	// suite). 25m gives ~3x headroom over the worst silence observed in a
+	// real run (8m09s, VUH-171) while still catching a stalled stream well
+	// under the old 2h fallback. Lower with MULTICA_OPENCODE_IDLE_WATCHDOG if
+	// opencode stalls need faster detection.
+	DefaultOpenCodeIdleWatchdog = 25 * time.Minute
 	// DefaultAgentIdleWatchdog is the per-task safety net that force-stops a
 	// run when the backend has emitted no message for this long AND its
 	// message queue is empty. Backends like Claude Code can hang indefinitely
@@ -148,7 +149,7 @@ type Config struct {
 	// for app-servers that are legitimately slow to their first event (GH #3262).
 	CodexFirstTurnNoProgressTimeout time.Duration
 	CodexHandshakeTimeout           time.Duration
-	OpenCodeIdleWatchdog            time.Duration // OpenCode-specific no-message window; 0 falls back to AgentIdleWatchdog and values above it cannot extend the global bound
+	OpenCodeIdleWatchdog            time.Duration // OpenCode-specific no-message window; can only narrow AgentIdleWatchdog, but for providers that can't report in-flight tools it also sets the run-long widened budget in place of AgentToolWatchdog (0 falls back to AgentToolWatchdog there)
 	AgentIdleWatchdog               time.Duration // force-stop a run when the backend goes silent this long with an empty queue (0 = disabled)
 	AgentToolWatchdog               time.Duration // force-stop a run when a single tool call stays in flight (silent) this long (0 = disabled); backstop for hung tools now that there is no wall-clock cap
 	ClaudeArgs                      []string

@@ -3819,6 +3819,44 @@ func TestExecuteAndDrain_IdleWatchdog_WidensForProviderWithoutInFlightToolReport
 	}
 }
 
+// VUH-171: a real opencode run stalled mid-LLM-stream for ~50 minutes with no
+// tool in flight. AgentToolWatchdog defaults to 2h (correctly generous for
+// claude/codex's genuinely long tool calls), so the widen-to-tool-budget
+// behavior above left opencode's stall undetected for hours. A provider's own
+// IdleWatchdogTimeout (OpenCodeIdleWatchdog) must win over AgentToolWatchdog
+// when widening, not be overwritten by it.
+func TestExecuteAndDrain_IdleWatchdog_PerProviderOverrideWinsWhenWidening(t *testing.T) {
+	t.Parallel()
+
+	d := newTestDaemon(t)
+	d.cfg.AgentIdleWatchdog = 50 * time.Millisecond
+	d.cfg.AgentToolWatchdog = 5 * time.Second // stands in for the 2h default
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	start := time.Now()
+	result, _, err := d.executeAndDrain(
+		ctx,
+		terminalOnlyToolBackend{toolSilence: 500 * time.Millisecond},
+		"p",
+		agent.ExecOptions{Provider: "opencode", IdleWatchdogTimeout: 300 * time.Millisecond},
+		slog.Default(),
+		"t-opencode-provider-override",
+		"",
+		new(atomic.Int32),
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Status != "idle_watchdog" {
+		t.Fatalf("opencode's own IdleWatchdogTimeout must be the widened budget, not AgentToolWatchdog; got status=%q (err=%q)", result.Status, result.Error)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("watchdog took too long to fire: %s (expected ~%s, not the %s tool budget)", elapsed, d.cfg.AgentIdleWatchdog, d.cfg.AgentToolWatchdog)
+	}
+}
+
 // Regression guard for the fix above: a provider that reports in-flight tools
 // normally (the default) must NOT get the widened window just because it
 // stayed silent — inFlightTools is genuinely zero here, so this is exactly
