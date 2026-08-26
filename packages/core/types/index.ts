@@ -201,6 +201,9 @@ export type {
   VCSProvider,
   VCSConnection,
   ListVCSConnectionsResponse,
+  GitLabOAuthAvailability,
+  GitLabTarget,
+  VCSWebhookRegistration,
   ConnectVCSRequest,
   ConnectVCSResponse,
 } from "./vcs";

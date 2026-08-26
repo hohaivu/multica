@@ -1,4 +1,4 @@
-import { queryOptions } from "@tanstack/react-query";
+import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
 import { api } from "../api";
 
 export const vcsKeys = {
@@ -15,5 +15,21 @@ export const vcsConnectionsOptions = (wsId: string) =>
     enabled: !!wsId,
   });
 
-export const gitlabTargetsOptions = (wsId: string, connectionId: string, page = 1) => queryOptions({ queryKey: [...vcsKeys.targets(wsId, connectionId), page], queryFn: () => api.listGitLabTargets(wsId, connectionId, { page }), enabled: !!wsId && !!connectionId });
-export const vcsWebhookRegistrationsOptions = (wsId: string, connectionId: string) => queryOptions({ queryKey: vcsKeys.hooks(wsId, connectionId), queryFn: () => api.listVCSWebhookRegistrations(wsId, connectionId), enabled: !!wsId && !!connectionId });
+export const gitlabTargetsOptions = (wsId: string, connectionId: string) =>
+  infiniteQueryOptions({
+    queryKey: vcsKeys.targets(wsId, connectionId),
+    queryFn: ({ pageParam }) =>
+      api.listGitLabTargets(wsId, connectionId, {
+        page: pageParam,
+      }),
+    initialPageParam: 1,
+    getNextPageParam: (lastPage) => (lastPage.next_page ? lastPage.next_page : undefined),
+    enabled: !!wsId && !!connectionId,
+  });
+
+export const vcsWebhookRegistrationsOptions = (wsId: string, connectionId: string) =>
+  queryOptions({
+    queryKey: vcsKeys.hooks(wsId, connectionId),
+    queryFn: () => api.listVCSWebhookRegistrations(wsId, connectionId),
+    enabled: !!wsId && !!connectionId,
+  });

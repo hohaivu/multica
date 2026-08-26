@@ -216,6 +216,8 @@ import type {
   PurchaseWorkspaceSeatsRequest,
   PurchaseWorkspaceSeatsResponse,
   CreateWorkspaceSubscriptionPortalResponse,
+  GitLabTarget,
+  VCSWebhookRegistration,
 } from "../types";
 import type { OnboardingCompletionPath } from "../onboarding/types";
 import type {
@@ -433,6 +435,11 @@ import {
   EMPTY_SHARE_LINK,
   EMPTY_SHARE_LINK_INFO,
   EMPTY_JOIN_SHARE_LINK_RESPONSE,
+  ListVCSConnectionsResponseSchema,
+  GitLabOAuthStartResponseSchema,
+  GitLabTargetsResponseSchema,
+  VCSWebhookRegistrationsResponseSchema,
+  VCSWebhookRegistrationSchema,
   type IssueView,
   type IssueViewPreference,
   type CreateIssueViewRequest,
@@ -4201,19 +4208,42 @@ export class ApiClient {
   }
 
   async startGitLabOAuth(workspaceId: string): Promise<{ url: string; configured: boolean }> {
-    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/vcs/oauth/start`);
-    return parseWithFallback(raw, GitLabOAuthStartResponseSchema, { url: "", configured: false }, { endpoint: "GET /api/workspaces/:id/vcs/oauth/start" });
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/vcs/gitlab/oauth/start`);
+    return parseWithFallback(raw, GitLabOAuthStartResponseSchema, { url: "", configured: false }, { endpoint: "GET /api/workspaces/:id/vcs/gitlab/oauth/start" });
   }
 
-  async listGitLabTargets(workspaceId: string, connectionId: string, params: { page?: number; per_page?: number } = {}) {
-    const q = new URLSearchParams(); if (params.page) q.set("page", String(params.page)); if (params.per_page) q.set("per_page", String(params.per_page));
+  async listGitLabTargets(
+    workspaceId: string,
+    connectionId: string,
+    params: { page?: number; per_page?: number } = {},
+  ): Promise<{ projects: GitLabTarget[]; groups: GitLabTarget[]; next_page: number }> {
+    const q = new URLSearchParams();
+    if (params.page) q.set("page", String(params.page));
+    if (params.per_page) q.set("per_page", String(params.per_page));
     const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/vcs/connections/${connectionId}/targets?${q}`);
     return parseWithFallback(raw, GitLabTargetsResponseSchema, { projects: [], groups: [], next_page: 0 }, { endpoint: "GET /api/workspaces/:id/vcs/connections/:connectionId/targets" });
   }
 
-  async listVCSWebhookRegistrations(workspaceId: string, connectionId: string) { const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/vcs/connections/${connectionId}/hooks`); return parseWithFallback(raw, VCSWebhookRegistrationsResponseSchema, { registrations: [] }, { endpoint: "GET /api/workspaces/:id/vcs/connections/:connectionId/hooks" }); }
-  async createVCSWebhookRegistration(workspaceId: string, connectionId: string, body: { scope: "project" | "group"; target_id: number; target_path?: string }) { const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/vcs/connections/${connectionId}/hooks`, { method: "POST", body: JSON.stringify(body) }); return parseWithFallback(raw, VCSWebhookRegistrationSchema, { connection_id: connectionId, scope: body.scope, target_id: body.target_id, target_path: body.target_path ?? "", hook_id: 0, created_at: "" }, { endpoint: "POST /api/workspaces/:id/vcs/connections/:connectionId/hooks" }); }
-  async deleteVCSWebhookRegistration(workspaceId: string, connectionId: string, scope: string, targetId: number) { await this.fetch(`/api/workspaces/${workspaceId}/vcs/connections/${connectionId}/hooks/${scope}/${targetId}`, { method: "DELETE" }); }
+  async listVCSWebhookRegistrations(
+    workspaceId: string,
+    connectionId: string,
+  ): Promise<{ registrations: VCSWebhookRegistration[] }> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/vcs/connections/${connectionId}/hooks`);
+    return parseWithFallback(raw, VCSWebhookRegistrationsResponseSchema, { registrations: [] }, { endpoint: "GET /api/workspaces/:id/vcs/connections/:connectionId/hooks" });
+  }
+
+  async createVCSWebhookRegistration(
+    workspaceId: string,
+    connectionId: string,
+    body: { scope: "project" | "group"; target_id: number; target_path?: string },
+  ): Promise<VCSWebhookRegistration> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/vcs/connections/${connectionId}/hooks`, { method: "POST", body: JSON.stringify(body) });
+    return parseWithFallback(raw, VCSWebhookRegistrationSchema, { connection_id: connectionId, scope: body.scope, target_id: body.target_id, target_path: body.target_path ?? "", hook_id: 0, created_at: "" }, { endpoint: "POST /api/workspaces/:id/vcs/connections/:connectionId/hooks" });
+  }
+
+  async deleteVCSWebhookRegistration(workspaceId: string, connectionId: string, scope: string, targetId: number): Promise<void> {
+    await this.fetch(`/api/workspaces/${workspaceId}/vcs/connections/${connectionId}/hooks/${scope}/${targetId}`, { method: "DELETE" });
+  }
 
   async connectVCS(
     workspaceId: string,

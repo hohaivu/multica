@@ -69,6 +69,14 @@ import {
   IssueStatusEntrySchema,
   EMPTY_LIST_ISSUE_STATUSES_RESPONSE,
   EMPTY_ISSUE_STATUS_ENTRY,
+  VCSConnectionSchema,
+  ListVCSConnectionsResponseSchema,
+  ConnectVCSResponseSchema,
+  GitLabOAuthStartResponseSchema,
+  GitLabTargetSchema,
+  GitLabTargetsResponseSchema,
+  VCSWebhookRegistrationSchema,
+  VCSWebhookRegistrationsResponseSchema,
 } from "./schemas";
 import { parseWithFallback } from "./schema";
 
@@ -1838,3 +1846,229 @@ describe("issue status catalog schemas", () => {
     expect(parsed).toEqual(EMPTY_ISSUE_STATUS_ENTRY);
   });
 });
+
+describe("VCSConnectionSchema and ListVCSConnectionsResponseSchema", () => {
+  const baseConn = {
+    id: "conn-1",
+    workspace_id: "ws-1",
+    provider: "gitlab",
+    instance_url: "https://gitlab.example.com",
+    account_login: "alice",
+    webhook_url: "https://multica.example.com/api/vcs/webhook/conn-1",
+    webhook_path: "/api/vcs/webhook/conn-1",
+    created_at: "2026-08-01T00:00:00Z",
+    auth_kind: "oauth",
+    credential_status: "ok",
+  };
+
+  it("parses a well-formed connections response with OAuth and PAT connections", () => {
+    const parsed = ListVCSConnectionsResponseSchema.parse({
+      connections: [
+        baseConn,
+        {
+          ...baseConn,
+          id: "conn-2",
+          provider: "forgejo",
+          instance_url: "https://forgejo.example.com",
+          auth_kind: "pat",
+        },
+      ],
+      available: true,
+      configured: true,
+      can_manage: true,
+      gitlab_oauth: { available: true, instance_url: "https://gitlab.example.com" },
+    });
+    expect(parsed.connections).toHaveLength(2);
+    expect(parsed.connections[0]?.auth_kind).toBe("oauth");
+    expect(parsed.connections[1]?.auth_kind).toBe("pat");
+    expect(parsed.gitlab_oauth?.available).toBe(true);
+  });
+
+  it("defaults connections to [] and applies defaults for auth_kind and credential_status", () => {
+    const parsed = ListVCSConnectionsResponseSchema.parse({});
+    expect(parsed.connections).toEqual([]);
+
+    const { auth_kind: _a, credential_status: _c, ...olderConn } = baseConn;
+    const parsedConn = VCSConnectionSchema.parse(olderConn);
+    expect(parsedConn.auth_kind).toBe("pat");
+    expect(parsedConn.credential_status).toBe("ok");
+  });
+
+  it("parseWithFallback falls back on malformed VCS connection response", () => {
+    const fallback = { connections: [] };
+    const parsed = parseWithFallback(
+      { connections: "not-an-array" },
+      ListVCSConnectionsResponseSchema,
+      fallback,
+      { endpoint: "GET /api/workspaces/:id/vcs/connections" },
+    );
+    expect(parsed).toEqual(fallback);
+  });
+
+  it("parseWithFallback falls back when a connection row has invalid provider", () => {
+    const fallback = { connections: [] };
+    const parsed = parseWithFallback(
+      { connections: [{ ...baseConn, provider: "bitbucket" }] },
+      ListVCSConnectionsResponseSchema,
+      fallback,
+      { endpoint: "GET /api/workspaces/:id/vcs/connections" },
+    );
+    expect(parsed).toEqual(fallback);
+  });
+});
+
+describe("ConnectVCSResponseSchema", () => {
+  const validConnect = {
+    id: "conn-1",
+    workspace_id: "ws-1",
+    provider: "forgejo",
+    instance_url: "https://forgejo.example.com",
+    account_login: "bob",
+    webhook_url: "https://multica.example.com/api/vcs/webhook/conn-1",
+    webhook_path: "/api/vcs/webhook/conn-1",
+    webhook_secret: "secret-xyz",
+    created_at: "2026-08-01T00:00:00Z",
+    auth_kind: "pat",
+    credential_status: "ok",
+  };
+
+  it("parses a well-formed connect response with webhook_secret", () => {
+    const parsed = ConnectVCSResponseSchema.parse(validConnect);
+    expect(parsed.webhook_secret).toBe("secret-xyz");
+  });
+
+  it("fails parse when required fields are missing", () => {
+    const { webhook_secret: _omit, ...withoutSecret } = validConnect;
+    expect(ConnectVCSResponseSchema.safeParse(withoutSecret).success).toBe(false);
+  });
+});
+
+describe("GitLabOAuthStartResponseSchema", () => {
+  it("parses a well-formed OAuth start response", () => {
+    const parsed = GitLabOAuthStartResponseSchema.parse({
+      url: "https://gitlab.example.com/oauth/authorize?client_id=123",
+      configured: true,
+    });
+    expect(parsed.url).toContain("https://gitlab.example.com");
+    expect(parsed.configured).toBe(true);
+  });
+
+  it("parseWithFallback returns fallback on malformed response", () => {
+    const fallback = { url: "", configured: false };
+    const parsed = parseWithFallback(
+      { url: 42, configured: "yes" },
+      GitLabOAuthStartResponseSchema,
+      fallback,
+      { endpoint: "GET /api/workspaces/:id/vcs/gitlab/oauth/start" },
+    );
+    expect(parsed).toEqual(fallback);
+  });
+});
+
+describe("GitLabTargetsResponseSchema and GitLabTargetSchema", () => {
+  const sampleProject = {
+    id: 101,
+    name: "multica",
+    path_with_namespace: "org/multica",
+    web_url: "https://gitlab.example.com/org/multica",
+  };
+  const sampleGroup = {
+    id: 202,
+    name: "core-team",
+    path_with_namespace: "groups/core-team",
+    web_url: "https://gitlab.example.com/groups/core-team",
+  };
+
+  it("parses an individual target schema and rejects malformed target", () => {
+    const parsed = GitLabTargetSchema.parse(sampleProject);
+    expect(parsed.name).toBe("multica");
+    expect(GitLabTargetSchema.safeParse({ id: "not-a-number" }).success).toBe(false);
+  });
+
+  it("parses well-formed projects, groups, and pagination", () => {
+    const parsed = GitLabTargetsResponseSchema.parse({
+      projects: [sampleProject],
+      groups: [sampleGroup],
+      next_page: 2,
+    });
+    expect(parsed.projects).toHaveLength(1);
+    expect(parsed.groups).toHaveLength(1);
+    expect(parsed.next_page).toBe(2);
+  });
+
+  it("defaults projects, groups, and next_page when omitted", () => {
+    const parsed = GitLabTargetsResponseSchema.parse({});
+    expect(parsed.projects).toEqual([]);
+    expect(parsed.groups).toEqual([]);
+    expect(parsed.next_page).toBe(0);
+  });
+
+  it("parseWithFallback returns fallback on malformed targets response", () => {
+    const fallback = { projects: [], groups: [], next_page: 0 };
+    const parsed = parseWithFallback(
+      { projects: [{ id: "not-a-number" }] },
+      GitLabTargetsResponseSchema,
+      fallback,
+      { endpoint: "GET /api/workspaces/:id/vcs/connections/:id/targets" },
+    );
+    expect(parsed).toEqual(fallback);
+  });
+});
+
+describe("VCSWebhookRegistrationsResponseSchema and VCSWebhookRegistrationSchema", () => {
+  const sampleReg = {
+    connection_id: "conn-1",
+    scope: "project",
+    target_id: 101,
+    target_path: "org/multica",
+    hook_id: 505,
+    created_at: "2026-08-01T00:00:00Z",
+  };
+
+  it("parses a well-formed registrations response", () => {
+    const parsed = VCSWebhookRegistrationsResponseSchema.parse({
+      registrations: [
+        sampleReg,
+        { ...sampleReg, scope: "group", target_id: 202, hook_id: 606 },
+      ],
+    });
+    expect(parsed.registrations).toHaveLength(2);
+    expect(parsed.registrations[0]?.scope).toBe("project");
+    expect(parsed.registrations[1]?.scope).toBe("group");
+  });
+
+  it("defaults registrations to [] when omitted", () => {
+    const parsed = VCSWebhookRegistrationsResponseSchema.parse({});
+    expect(parsed.registrations).toEqual([]);
+  });
+
+  it("parseWithFallback returns fallback on malformed registrations response", () => {
+    const fallback = { registrations: [] };
+    const parsed = parseWithFallback(
+      { registrations: "not-an-array" },
+      VCSWebhookRegistrationsResponseSchema,
+      fallback,
+      { endpoint: "GET /api/workspaces/:id/vcs/connections/:id/hooks" },
+    );
+    expect(parsed).toEqual(fallback);
+  });
+
+  it("parseWithFallback returns fallback on malformed single registration", () => {
+    const fallback = {
+      connection_id: "conn-1",
+      scope: "project" as const,
+      target_id: 101,
+      target_path: "org/multica",
+      hook_id: 0,
+      created_at: "",
+    };
+    const parsed = parseWithFallback(
+      { scope: "invalid-scope" },
+      VCSWebhookRegistrationSchema,
+      fallback,
+      { endpoint: "POST /api/workspaces/:id/vcs/connections/:id/hooks" },
+    );
+    expect(parsed).toEqual(fallback);
+  });
+});
+

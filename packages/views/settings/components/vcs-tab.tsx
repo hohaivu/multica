@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Copy, GitBranch, RefreshCw, Trash2 } from "lucide-react";
+import { Copy, GitBranch, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
 import { Card, CardContent } from "@multica/ui/components/ui/card";
 import { Input } from "@multica/ui/components/ui/input";
@@ -26,9 +27,14 @@ import {
   AlertDialogTitle,
 } from "@multica/ui/components/ui/alert-dialog";
 import { useWorkspaceId } from "@multica/core/hooks";
-import { vcsConnectionsOptions } from "@multica/core/vcs";
-import { api } from "@multica/core/api";
-import type { ConnectVCSResponse, VCSProvider } from "@multica/core/types";
+import {
+  gitlabTargetsOptions,
+  vcsConnectionsOptions,
+  vcsKeys,
+  vcsWebhookRegistrationsOptions,
+} from "@multica/core/vcs";
+import { api, ApiError } from "@multica/core/api";
+import type { ConnectVCSResponse, GitLabTarget, VCSProvider, VCSWebhookRegistration } from "@multica/core/types";
 import { useT } from "../../i18n";
 
 const PROVIDERS: VCSProvider[] = ["forgejo", "gitea", "gitlab"];
@@ -41,7 +47,6 @@ const PROVIDER_OPTIONS = PROVIDERS.map((p) => ({
   value: p,
   label: PROVIDER_LABELS[p],
 }));
-
 
 export function VCSTab() {
   const { t } = useT("settings");
@@ -66,16 +71,21 @@ export function VCSTab() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get("gitlab_connected") === "1") toast.success("GitLab connected");
-    if (params.get("gitlab_error")) toast.error(`GitLab connection failed: ${params.get("gitlab_error")}`);
-  }, []);
+    if (params.get("gitlab_connected") === "1") {
+      toast.success(t(($) => $.vcs.toast_gitlab_connected));
+    }
+    const gitlabError = params.get("gitlab_error");
+    if (gitlabError) {
+      toast.error(t(($) => $.vcs.toast_gitlab_error, { error: gitlabError }));
+    }
+  }, [t]);
 
   async function handleGitLabOAuth() {
     try {
       const result = await api.startGitLabOAuth(wsId);
       if (result.configured && result.url) window.location.href = result.url;
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Could not start GitLab connection");
+      toast.error(e instanceof Error ? e.message : t(($) => $.vcs.toast_connect_failed));
     }
   }
 
@@ -149,38 +159,70 @@ export function VCSTab() {
         <div className="space-y-3">
           {connections.map((c) => (
             <Card key={c.id}>
-              <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
-                <div className="flex min-w-0 items-start gap-3">
-                  <div className="rounded-md border bg-muted/50 p-2 text-muted-foreground shrink-0">
-                    <GitBranch className="h-4 w-4" />
+              <CardContent className="space-y-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+                  <div className="flex min-w-0 items-start gap-3">
+                    <div className="rounded-md border bg-muted/50 p-2 text-muted-foreground shrink-0">
+                      <GitBranch className="h-4 w-4" />
+                    </div>
+                    <div className="min-w-0 space-y-0.5">
+                      <p className="text-body font-medium break-all">
+                        {(PROVIDER_LABELS[c.provider] ?? c.provider) + " · " + c.instance_url}
+                      </p>
+                      <p className="text-caption text-muted-foreground break-all">
+                        {t(($) => $.vcs.connected_as, { login: c.account_login })}
+                      </p>
+                    </div>
                   </div>
-                  <div className="min-w-0 space-y-0.5">
-                    <p className="text-body font-medium break-all">
-                      {(PROVIDER_LABELS[c.provider] ?? c.provider) + " · " + c.instance_url}
-                    </p>
-                     <p className="text-caption text-muted-foreground break-all">
-                       {t(($) => $.vcs.connected_as, { login: c.account_login })}
-                     </p>
-                     {c.auth_kind === "oauth" && c.credential_status === "expired" && (
-                       <p className="text-caption text-destructive">GitLab authorization expired. Reconnect GitLab.</p>
-                     )}
-                  </div>
+                  {canManage && (
+                    <div className="flex flex-wrap items-center gap-2 shrink-0">
+                      {c.auth_kind === "oauth" && c.credential_status === "expired" && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={handleGitLabOAuth}
+                        >
+                          {t(($) => $.vcs.reconnect_gitlab)}
+                        </Button>
+                      )}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setRotateTarget(c.id)}
+                      >
+                        <RefreshCw className="h-3 w-3" />
+                        {t(($) => $.vcs.regenerate_webhook)}
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={() => setDeleteTarget(c.id)}>
+                        <Trash2 className="h-3 w-3" />
+                        {t(($) => $.vcs.disconnect)}
+                      </Button>
+                    </div>
+                  )}
                 </div>
-                {canManage && (
-                  <div className="flex flex-wrap items-center gap-2 shrink-0">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setRotateTarget(c.id)}
-                    >
-                      <RefreshCw className="h-3 w-3" />
-                      {t(($) => $.vcs.regenerate_webhook)}
-                    </Button>
-                    <Button variant="outline" size="sm" onClick={() => setDeleteTarget(c.id)}>
-                      <Trash2 className="h-3 w-3" />
-                      {t(($) => $.vcs.disconnect)}
-                    </Button>
+
+                {c.auth_kind === "oauth" && c.credential_status === "expired" && (
+                  <div className="flex items-center justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-caption text-destructive">
+                    <p>{t(($) => $.vcs.reconnect_gitlab_prompt)}</p>
+                    {canManage && (
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={handleGitLabOAuth}
+                      >
+                        {t(($) => $.vcs.reconnect_gitlab)}
+                      </Button>
+                    )}
                   </div>
+                )}
+
+                {c.auth_kind === "oauth" && (
+                  <GitLabOAuthHooksSection
+                    wsId={wsId}
+                    connectionId={c.id}
+                    canManage={canManage}
+                    onReconnect={handleGitLabOAuth}
+                  />
                 )}
               </CardContent>
             </Card>
@@ -233,7 +275,7 @@ export function VCSTab() {
               <>
                 {gitlabOAuth?.available && (
                   <Button className="w-full" onClick={handleGitLabOAuth}>
-                    Connect GitLab
+                    {t(($) => $.vcs.connect_gitlab)}
                   </Button>
                 )}
                 <div className="space-y-1.5">
@@ -343,6 +385,236 @@ export function VCSTab() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+    </div>
+  );
+}
+
+function GitLabOAuthHooksSection({
+  wsId,
+  connectionId,
+  canManage,
+  onReconnect,
+}: {
+  wsId: string;
+  connectionId: string;
+  canManage: boolean;
+  onReconnect: () => void;
+}) {
+  const { t } = useT("settings");
+  const qc = useQueryClient();
+  const [mutatingTarget, setMutatingTarget] = useState<string | null>(null);
+
+  const { data: hooksData } = useQuery(vcsWebhookRegistrationsOptions(wsId, connectionId));
+  const registrations: VCSWebhookRegistration[] = hooksData?.registrations ?? [];
+
+  const {
+    data: targetsData,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useInfiniteQuery(gitlabTargetsOptions(wsId, connectionId));
+
+  const allProjects: GitLabTarget[] = targetsData?.pages.flatMap((p) => p.projects) ?? [];
+  const allGroups: GitLabTarget[] = targetsData?.pages.flatMap((p) => p.groups) ?? [];
+
+  async function handleAdd(scope: "project" | "group", targetId: number, targetPath: string) {
+    const key = `${scope}-${targetId}`;
+    setMutatingTarget(key);
+    try {
+      await api.createVCSWebhookRegistration(wsId, connectionId, {
+        scope,
+        target_id: targetId,
+        target_path: targetPath,
+      });
+      await qc.invalidateQueries({ queryKey: vcsKeys.hooks(wsId, connectionId) });
+      toast.success(t(($) => $.vcs.toast_webhook_created));
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409) {
+        toast.error(t(($) => $.vcs.reconnect_gitlab_prompt), {
+          action: {
+            label: t(($) => $.vcs.reconnect_gitlab),
+            onClick: onReconnect,
+          },
+        });
+      } else if (err instanceof ApiError && err.status === 400) {
+        toast.error(err.message);
+      } else {
+        toast.error(err instanceof Error ? err.message : t(($) => $.vcs.toast_webhook_create_failed));
+      }
+    } finally {
+      setMutatingTarget(null);
+    }
+  }
+
+  async function handleRemove(scope: "project" | "group", targetId: number) {
+    const key = `${scope}-${targetId}`;
+    setMutatingTarget(key);
+    try {
+      await api.deleteVCSWebhookRegistration(wsId, connectionId, scope, targetId);
+      await qc.invalidateQueries({ queryKey: vcsKeys.hooks(wsId, connectionId) });
+      toast.success(t(($) => $.vcs.toast_webhook_deleted));
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409) {
+        toast.error(t(($) => $.vcs.reconnect_gitlab_prompt), {
+          action: {
+            label: t(($) => $.vcs.reconnect_gitlab),
+            onClick: onReconnect,
+          },
+        });
+      } else if (err instanceof ApiError && err.status === 400) {
+        toast.error(err.message);
+      } else {
+        toast.error(err instanceof Error ? err.message : t(($) => $.vcs.toast_webhook_delete_failed));
+      }
+    } finally {
+      setMutatingTarget(null);
+    }
+  }
+
+  return (
+    <div className="space-y-4 pt-2 border-t border-border/50">
+      <div className="space-y-2">
+        <p className="text-caption font-medium">{t(($) => $.vcs.registered_webhooks_title)}</p>
+        {registrations.length === 0 ? (
+          <p className="text-caption text-muted-foreground">{t(($) => $.vcs.no_webhooks_registered)}</p>
+        ) : (
+          <div className="space-y-1.5">
+            {registrations.map((reg) => (
+              <div
+                key={`${reg.scope}-${reg.target_id}`}
+                className="flex items-center justify-between gap-2 rounded-md border bg-muted/30 px-3 py-1.5 text-caption"
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <Badge variant="secondary" className="text-micro font-normal shrink-0">
+                    {reg.scope === "project" ? t(($) => $.vcs.scope_project) : t(($) => $.vcs.scope_group)}
+                  </Badge>
+                  <span className="font-mono truncate">
+                    {reg.target_path || reg.target_id}
+                  </span>
+                </div>
+                {canManage && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 text-destructive hover:text-destructive shrink-0"
+                    onClick={() => handleRemove(reg.scope, reg.target_id)}
+                    disabled={mutatingTarget === `${reg.scope}-${reg.target_id}`}
+                    title={t(($) => $.vcs.remove_webhook)}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    <span className="sr-only">{t(($) => $.vcs.remove_webhook)}</span>
+                  </Button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {canManage && (
+        <div className="space-y-2">
+          <p className="text-caption font-medium">{t(($) => $.vcs.target_picker_title)}</p>
+          <div className="space-y-1.5">
+            {allProjects.map((proj) => {
+              const isRegistered = registrations.some(
+                (r) => r.scope === "project" && r.target_id === proj.id,
+              );
+              return (
+                <div
+                  key={`project-${proj.id}`}
+                  className="flex items-center justify-between gap-2 rounded-md border bg-card px-3 py-1.5 text-caption"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Badge variant="outline" className="text-micro font-normal shrink-0">
+                      {t(($) => $.vcs.scope_project)}
+                    </Badge>
+                    <span className="truncate" title={proj.path_with_namespace}>
+                      {proj.path_with_namespace}
+                    </span>
+                  </div>
+                  {isRegistered ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 px-2 text-destructive hover:text-destructive shrink-0"
+                      onClick={() => handleRemove("project", proj.id)}
+                      disabled={mutatingTarget === `project-${proj.id}`}
+                    >
+                      {t(($) => $.vcs.remove_webhook)}
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 px-2 shrink-0"
+                      onClick={() => handleAdd("project", proj.id, proj.path_with_namespace)}
+                      disabled={mutatingTarget === `project-${proj.id}`}
+                    >
+                      <Plus className="h-3.5 w-3.5 mr-1" />
+                      {t(($) => $.vcs.add_webhook)}
+                    </Button>
+                  )}
+                </div>
+              );
+            })}
+
+            {allGroups.map((grp) => {
+              const isRegistered = registrations.some(
+                (r) => r.scope === "group" && r.target_id === grp.id,
+              );
+              return (
+                <div
+                  key={`group-${grp.id}`}
+                  className="flex items-center justify-between gap-2 rounded-md border bg-card px-3 py-1.5 text-caption"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Badge variant="outline" className="text-micro font-normal shrink-0">
+                      {t(($) => $.vcs.scope_group)}
+                    </Badge>
+                    <span className="truncate" title={grp.path_with_namespace}>
+                      {grp.path_with_namespace}
+                    </span>
+                  </div>
+                  {isRegistered ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 px-2 text-destructive hover:text-destructive shrink-0"
+                      onClick={() => handleRemove("group", grp.id)}
+                      disabled={mutatingTarget === `group-${grp.id}`}
+                    >
+                      {t(($) => $.vcs.remove_webhook)}
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 px-2 shrink-0"
+                      onClick={() => handleAdd("group", grp.id, grp.path_with_namespace)}
+                      disabled={mutatingTarget === `group-${grp.id}`}
+                    >
+                      <Plus className="h-3.5 w-3.5 mr-1" />
+                      {t(($) => $.vcs.add_webhook)}
+                    </Button>
+                  )}
+                </div>
+              );
+            })}
+
+            {hasNextPage && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="w-full text-caption"
+                onClick={() => fetchNextPage()}
+                disabled={isFetchingNextPage}
+              >
+                {t(($) => $.vcs.load_more_targets)}
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

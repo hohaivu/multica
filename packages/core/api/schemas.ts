@@ -83,9 +83,6 @@ import type {
   User,
   WebhookDelivery,
   WorkspaceMcpServer,
-  ListVCSConnectionsResponse,
-  ConnectVCSResponse,
-  VCSWebhookRegistration,
 } from "../types";
 import type { CloudRuntimeNode } from "../runtimes/cloud-runtime";
 import type { CreateFeedbackResponse } from "../feedback/types";
