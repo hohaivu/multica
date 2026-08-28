@@ -101,7 +101,7 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 	stderrBuf := newStderrTail(newLogWriter(b.cfg.Logger, "[agy:stderr] "), agentStderrTailBytes)
 	cmd.Stderr = stderrBuf
 
-	if err := cmd.Start(); err != nil {
+	if err := startOwnedProcessTree(cmd, b.cfg.Logger); err != nil {
 		cancel()
 		_ = os.Remove(logPath)
 		return nil, fmt.Errorf("start agy: %w", err)
@@ -236,6 +236,7 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 		}
 
 		waitErr := cmd.Wait()
+		releaseProcessGroup(cmd)
 		duration := time.Since(startTime)
 
 		sessionID := structuredSessionID
