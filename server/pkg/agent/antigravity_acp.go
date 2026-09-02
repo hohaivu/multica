@@ -162,7 +162,7 @@ func (b *antigravityACPBackend) Execute(ctx context.Context, prompt string, opts
 		return nil, fmt.Errorf("antigravity-acp stderr pipe: %w", err)
 	}
 
-	if err := cmd.Start(); err != nil {
+	if err := startOwnedProcessTree(cmd, b.cfg.Logger); err != nil {
 		cancel()
 		return nil, fmt.Errorf("start antigravity-acp: %w", err)
 	}
@@ -226,6 +226,7 @@ func (b *antigravityACPBackend) Execute(ctx context.Context, prompt string, opts
 		defer func() {
 			stdin.Close()
 			_ = cmd.Wait()
+			releaseProcessGroup(cmd)
 		}()
 
 		startTime := time.Now()

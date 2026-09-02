@@ -24,7 +24,7 @@ func (b *opencodeBackend) exportSession(parent context.Context, executable strin
 	cmd.Dir = opts.Cwd
 	cmd.Env = env
 	cmd.Stdin = strings.NewReader("")
-	data, err := cmd.Output()
+	data, err := outputOwned(cmd, b.cfg.Logger)
 	if err != nil {
 		return opencodeExportResult{}, err
 	}

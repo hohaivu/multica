@@ -23,13 +23,14 @@ const (
 	DefaultPollInterval      = 30 * time.Second
 	DefaultHeartbeatInterval = 15 * time.Second
 	// DefaultAgentTimeout is the optional absolute wall-clock cap on a single
-	// agent run. 0 = no cap: a run is bounded only by the inactivity watchdogs
-	// (DefaultAgentIdleWatchdog / DefaultAgentToolWatchdog), so a session that keeps emitting events is
+	// agent run. 0 = no cap: a run is bounded only by the inactivity watchdog
+	// (DefaultAgentIdleWatchdog), so a session that keeps emitting events is
 	// never killed merely for running long (MUL-3064). Operators who want a
 	// hard ceiling for cost/resource control can set MULTICA_AGENT_TIMEOUT.
 	DefaultAgentTimeout                   = 0
 	DefaultCodexSemanticInactivityTimeout = 10 * time.Minute
 	DefaultCodexHandshakeTimeout          = 30 * time.Second
+	DefaultCodexThreadHandshakeTimeout    = 60 * time.Second
 	// DefaultOpenCodeIdleWatchdog is opencode's run-long silence budget.
 	// OpenCode's `--format json` stream reports a tool part only once it is
 	// already terminal (providerReportsInFlightTools), so unlike other
@@ -59,6 +60,15 @@ const (
 	// still needs more per-message headroom than this can raise
 	// MULTICA_AGENT_IDLE_WATCHDOG; set it to 0 to disable the watchdog
 	// entirely.
+	//
+	// Upstream moved this knob to 2h and collapsed the tool budget into it,
+	// on the reasoning that the value should track the longest legitimate
+	// silent step. That reasoning assumes a force-stop throws the work away;
+	// here it does not, because idle_watchdog resumes the provider session.
+	// So this fork keeps the short idle budget AND the separate, larger tool
+	// budget below — the split upstream's own MULTICA_AGENT_TOOL_WATCHDOG
+	// note describes as the deliberate "tools may run longer than the model
+	// may think" case.
 	DefaultAgentIdleWatchdog = 3 * time.Minute
 	// DefaultAgentToolWatchdog bounds how long a single tool call may stay in
 	// flight (tool_use emitted, no tool_result and no other message) before the
@@ -117,7 +127,7 @@ type Config struct {
 	CLIVersion                     string                // multica CLI version (e.g. "0.1.13")
 	LaunchedBy                     string                // "desktop" when spawned by the Electron app, empty for standalone
 	Profile                        string                // profile name (empty = default)
-	Agents                         map[string]AgentEntry // keyed by provider: claude, codebuddy, codex, copilot, opencode, openclaw, hermes, pi, cursor, kimi, reasonix, dsh, kiro, antigravity, qoder, qoderclicn, traecli, grok, qwen, qwenpaw, mcode, dim, zeroclaw (plus built-in runtime identities from agent.BuiltinRuntimes, e.g. omp)
+	Agents                         map[string]AgentEntry // keyed by provider: claude, codebuddy, codex, copilot, opencode, codearts, deveco, openclaw, hermes, pi, cursor, kimi, reasonix, dsh, kiro, antigravity, qoder, qoderclicn, traecli, grok, qwen, qwenpaw, mcode, dim, zeroclaw (plus built-in runtime identities from agent.BuiltinRuntimes, e.g. omp)
 	WorkspacesRoot                 string                // base path for execution envs (default: ~/multica_workspaces)
 	KeepEnvAfterTask               bool                  // preserve env after task for debugging
 	HealthPort                     int                   // local HTTP port for health checks (default: 19514)
@@ -149,9 +159,10 @@ type Config struct {
 	// for app-servers that are legitimately slow to their first event (GH #3262).
 	CodexFirstTurnNoProgressTimeout time.Duration
 	CodexHandshakeTimeout           time.Duration
+	CodexThreadHandshakeTimeout     time.Duration
 	OpenCodeIdleWatchdog            time.Duration // OpenCode-specific no-message window; can only narrow AgentIdleWatchdog, but for providers that can't report in-flight tools it also sets the run-long widened budget in place of AgentToolWatchdog (0 falls back to AgentToolWatchdog there)
 	AgentIdleWatchdog               time.Duration // force-stop a run when the backend goes silent this long with an empty queue (0 = disabled)
-	AgentToolWatchdog               time.Duration // force-stop a run when a single tool call stays in flight (silent) this long (0 = disabled); backstop for hung tools now that there is no wall-clock cap
+	AgentToolWatchdog               time.Duration // force-stop a run when a single tool call stays in flight (silent) this long (0 = never force-stop during a tool call); defaults to DefaultAgentToolWatchdog, deliberately larger than AgentIdleWatchdog because a tool may legitimately run far longer than the model may think
 	ClaudeArgs                      []string
 	CodexArgs                       []string
 	CodebuddyArgs                   []string
@@ -264,7 +275,7 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	// can re-run the same discovery on a live daemon (MUL-5439).
 	agents := probeAgentCLIs()
 	if len(agents) == 0 && !overrides.AllowNoAgents {
-		return Config{}, fmt.Errorf("no agent CLI found: install claude, codebuddy, codex, copilot, opencode, deveco, openclaw, hermes, pi, omp, cursor-agent, kimi, reasonix, dsh, kiro-cli, agy, qodercli, qoderclicn, traecli, grok, qwen, qwenpaw, mcode, dim, or zeroclaw and ensure it is on PATH")
+		return Config{}, fmt.Errorf("no agent CLI found: install claude, codebuddy, codearts, codex, copilot, opencode, deveco, openclaw, hermes, pi, omp, cursor-agent, kimi, reasonix, dsh, kiro-cli, agy, qodercli, qoderclicn, traecli, grok, qwen, qwenpaw, mcode, dim, or zeroclaw and ensure it is on PATH")
 	}
 
 	claudeArgs, err := shellArgsFromEnv("MULTICA_CLAUDE_ARGS")
@@ -319,7 +330,67 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		agentTimeout = *overrides.AgentTimeout
 	}
 
-	codexSemanticInactivityTimeout, err := durationFromEnv("MULTICA_CODEX_SEMANTIC_INACTIVITY_TIMEOUT", DefaultCodexSemanticInactivityTimeout)
+	// MULTICA_AGENT_IDLE_WATCHDOG=0 disables the per-task idle watchdog. We
+	// route 0 through durationFromEnv so the operator can opt out without
+	// patching the binary; any positive duration overrides DefaultAgentIdleWatchdog.
+	agentIdleWatchdog, err := durationFromEnv("MULTICA_AGENT_IDLE_WATCHDOG", DefaultAgentIdleWatchdog)
+	if err != nil {
+		return Config{}, err
+	}
+	// MULTICA_OPENCODE_IDLE_WATCHDOG narrows the no-message window for
+	// OpenCode's streamed model responses. Zero removes the provider-specific
+	// override and falls back to MULTICA_AGENT_IDLE_WATCHDOG; positive values
+	// cannot extend the global bound, and the global zero still disables the
+	// whole mechanism.
+	openCodeIdleWatchdog, err := durationFromEnv("MULTICA_OPENCODE_IDLE_WATCHDOG", DefaultOpenCodeIdleWatchdog)
+	if err != nil {
+		return Config{}, err
+	}
+
+	// The in-flight-tool budget stays a separate, larger number than the idle
+	// budget. Upstream collapsed the two, on the reasoning that one value can
+	// cover the longest legitimate silent step — but that only holds when the
+	// idle budget is sized for a long assistant message. Here it is 3 min
+	// (DefaultAgentIdleWatchdog), because a false idle kill resumes the same
+	// provider session, and a build/install/test that legitimately runs silent
+	// for 20 minutes must not inherit that window.
+	//
+	// MULTICA_AGENT_TOOL_WATCHDOG overrides it, and 0 keeps its meaning: never
+	// force-stop while a tool is in flight.
+	agentToolWatchdog, err := durationFromEnv("MULTICA_AGENT_TOOL_WATCHDOG", DefaultAgentToolWatchdog)
+	if err != nil {
+		return Config{}, err
+	}
+
+	// Codex runs a semantic-inactivity timer of its own inside the app-server
+	// protocol, and unlike the daemon's watchdog it is NOT tool-aware: a
+	// commandExecution that emits nothing for the whole window trips it even
+	// though a tool is plainly in flight. That one timer therefore stands in
+	// for BOTH daemon watchdogs on a Codex run, so it has to be sized like the
+	// larger of them — otherwise a quiet test suite or an output-buffering
+	// `docker build` dies at the Codex ceiling long before the daemon budget
+	// that was supposed to protect it, and "we raised the budget to 2h" is
+	// simply false for Codex users.
+	//
+	// A tool budget of 0 means "never force-stop while a tool is in flight",
+	// which this timer cannot express — it has no way to see the tool. It falls
+	// back to the idle budget rather than running unbounded, which is the
+	// conservative reading.
+	//
+	// When the whole watchdog suite is disabled (idle = 0), Codex keeps its own
+	// built-in default. Disabling the daemon's watchdogs has never disabled this
+	// timer, and quietly turning it into "unbounded" here would be a much larger
+	// change than this one. Upstream gets that for free because its tool budget
+	// tracks the idle one; here the tool budget is an independent constant, so
+	// idle = 0 has to short-circuit before it is consulted.
+	codexSemanticDefault := agentIdleWatchdog
+	if codexSemanticDefault > 0 && agentToolWatchdog > codexSemanticDefault {
+		codexSemanticDefault = agentToolWatchdog
+	}
+	if codexSemanticDefault <= 0 {
+		codexSemanticDefault = DefaultCodexSemanticInactivityTimeout
+	}
+	codexSemanticInactivityTimeout, err := durationFromEnv("MULTICA_CODEX_SEMANTIC_INACTIVITY_TIMEOUT", codexSemanticDefault)
 	if err != nil {
 		return Config{}, err
 	}
@@ -367,29 +438,18 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	if overrides.CodexHandshakeTimeout > 0 {
 		codexHandshakeTimeout = overrides.CodexHandshakeTimeout
 	}
-
-	// MULTICA_AGENT_IDLE_WATCHDOG=0 disables the per-task idle watchdog. We
-	// route 0 through durationFromEnv so the operator can opt out without
-	// patching the binary; any positive duration overrides DefaultAgentIdleWatchdog.
-	agentIdleWatchdog, err := durationFromEnv("MULTICA_AGENT_IDLE_WATCHDOG", DefaultAgentIdleWatchdog)
-	if err != nil {
-		return Config{}, err
+	// Preserve the legacy global override semantics while giving the heavy
+	// thread RPCs a wider built-in default. The CLI resolves flag, env and
+	// persisted config values into Overrides, while embedded callers may reach
+	// LoadConfig with the environment directly.
+	codexThreadHandshakeTimeout := DefaultCodexThreadHandshakeTimeout
+	if raw, ok := os.LookupEnv("MULTICA_CODEX_HANDSHAKE_TIMEOUT"); ok && strings.TrimSpace(raw) != "" {
+		if parsed, parseErr := parseFlexDuration(strings.TrimSpace(raw)); parseErr == nil && parsed > 0 {
+			codexThreadHandshakeTimeout = codexHandshakeTimeout
+		}
 	}
-	// MULTICA_OPENCODE_IDLE_WATCHDOG narrows the no-message window for
-	// OpenCode's streamed model responses. Zero removes the provider-specific
-	// override and falls back to MULTICA_AGENT_IDLE_WATCHDOG; positive values
-	// cannot extend the global bound, and the global zero still disables the
-	// whole mechanism.
-	openCodeIdleWatchdog, err := durationFromEnv("MULTICA_OPENCODE_IDLE_WATCHDOG", DefaultOpenCodeIdleWatchdog)
-	if err != nil {
-		return Config{}, err
-	}
-
-	// MULTICA_AGENT_TOOL_WATCHDOG=0 disables the in-flight-tool backstop; any
-	// positive duration overrides DefaultAgentToolWatchdog.
-	agentToolWatchdog, err := durationFromEnv("MULTICA_AGENT_TOOL_WATCHDOG", DefaultAgentToolWatchdog)
-	if err != nil {
-		return Config{}, err
+	if overrides.CodexHandshakeTimeout > 0 {
+		codexThreadHandshakeTimeout = overrides.CodexHandshakeTimeout
 	}
 
 	maxConcurrentTasks, err := intFromEnv("MULTICA_DAEMON_MAX_CONCURRENT_TASKS", DefaultMaxConcurrentTasks)
@@ -577,6 +637,7 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		CodexSemanticInactivityTimeout:  codexSemanticInactivityTimeout,
 		CodexFirstTurnNoProgressTimeout: codexFirstTurnNoProgressTimeout,
 		CodexHandshakeTimeout:           codexHandshakeTimeout,
+		CodexThreadHandshakeTimeout:     codexThreadHandshakeTimeout,
 		OpenCodeIdleWatchdog:            openCodeIdleWatchdog,
 		AgentIdleWatchdog:               agentIdleWatchdog,
 		AgentToolWatchdog:               agentToolWatchdog,
@@ -890,7 +951,7 @@ func isExecutableFile(path string) bool {
 // descriptor registry (agent.BuiltinRuntimeCommands) so adding a new fork
 // doesn't require editing this list by hand.
 var defaultAgentCommandNames = append([]string{
-	"claude", "codex", "opencode", "deveco", "openclaw", "hermes",
+	"claude", "codex", "opencode", "codearts", "deveco", "openclaw", "hermes",
 	"pi", "cursor-agent", "copilot", "kimi", "reasonix", "dsh", "kiro-cli", "codebuddy", "agy", "qodercli", "qoderclicn", "traecli", "grok", "qwen", "qwenpaw", "mcode", "dim", "zeroclaw",
 }, agent.BuiltinRuntimeCommands()...)
 
